@@ -1,0 +1,12 @@
+{
+  "domain": "mypv_elwa2_modbus",
+  "name": "MyPV ELWA 2 Modbus (unofficial)",
+  "codeowners": ["@YOUR_GITHUB_USERNAME"],
+  "config_flow": true,
+  "documentation": "https://github.com/YOUR_GITHUB_USERNAME/ha-mypv-elwa2-modbus",
+  "issue_tracker": "https://github.com/YOUR_GITHUB_USERNAME/ha-mypv-elwa2-modbus/issues",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "requirements": ["pymodbus>=3.6.6,<4.0"],
+  "version": "0.1.0"
+}

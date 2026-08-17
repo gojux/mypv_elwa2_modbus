@@ -1,0 +1,5 @@
+{
+  "name": "MyPV ELWA 2 Modbus (unofficial)",
+  "render_readme": true,
+  "homeassistant": "2024.11.0"
+}

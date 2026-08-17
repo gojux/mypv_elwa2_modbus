@@ -1,0 +1,107 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Mit MyPV ELWA 2 verbinden",
+        "description": "Gib die Modbus-TCP-Verbindungsdaten deiner AC ELWA 2 ein. Modbus TCP muss im Webinterface des Geräts aktiviert sein (Einstellungen -> Schnittstellen -> Modbus).",
+        "data": {
+          "host": "Host / IP-Adresse",
+          "port": "Port",
+          "unit_id": "Modbus Unit-ID (Slave-ID)"
+        }
+      },
+      "reconfigure": {
+        "title": "MyPV ELWA 2 neu konfigurieren",
+        "description": "Aktualisiere die Modbus-TCP-Verbindungsdaten deiner AC ELWA 2, z. B. nachdem sich ihre IP-Adresse geändert hat.",
+        "data": {
+          "host": "Host / IP-Adresse",
+          "port": "Port",
+          "unit_id": "Modbus Unit-ID (Slave-ID)"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Verbindung fehlgeschlagen. Prüfe IP-Adresse, Port und ob Modbus TCP am Gerät aktiviert ist.",
+      "unknown": "Unerwarteter Fehler"
+    },
+    "abort": {
+      "already_configured": "Dieses Gerät ist bereits eingerichtet.",
+      "reconfigure_successful": "Die Neukonfiguration war erfolgreich.",
+      "unique_id_mismatch": "Das Gerät unter dieser Adresse stimmt nicht mit dem ursprünglich eingerichteten Gerät überein (abweichende Seriennummer)."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "MyPV ELWA 2 Optionen",
+        "data": {
+          "scan_interval": "Abfrageintervall (Sekunden)",
+          "max_power": "Maximale Leistung (W), wird verwendet, falls das Gerät kein Limit meldet"
+        }
+      }
+    }
+  },
+  "entity": {
+    "sensor": {
+      "power": { "name": "Leistung" },
+      "temperature": { "name": "Temperatur" },
+      "temperature_2": { "name": "Temperatur 2" },
+      "voltage": { "name": "Spannung" },
+      "status": {
+        "name": "Status",
+        "state": {
+          "no_control": "Kein Steuersignal",
+          "heat": "Heizt",
+          "standby": "Standby",
+          "boost_heat": "Boost-Heizung aktiv",
+          "heat_finished": "Heizung abgeschlossen",
+          "legionella_boost_active": "Legionellen-Boost aktiv",
+          "device_disabled": "Gerät deaktiviert",
+          "device_blocked": "Gerät blockiert",
+          "stl_triggered": "Sicherheitstemperaturbegrenzer ausgelöst",
+          "power_stage_overtemp": "Übertemperatur Leistungsteil",
+          "power_stage_pcb_temp_probe_fault": "Fehler Temperaturfühler Leistungsteil",
+          "hardware_fault": "Hardwarefehler",
+          "elwa_temp_sensor_fault": "Fehler Temperatursensor",
+          "mainboard_error": "Mainboard-Fehler"
+        }
+      },
+      "operation_state": {
+        "name": "Betriebszustand",
+        "state": {
+          "standby": "Standby (wartet auf PV-Überschuss)",
+          "pv_excess": "Heizt mit PV-Überschuss",
+          "boost_backup": "Boost-Backup-Modus",
+          "target_reached": "Zieltemperatur erreicht",
+          "no_control_signal": "Kein Steuersignal",
+          "no_control_signal_intermittent": "Kein Steuersignal (unterbrochen)",
+          "blocked": "Blockiert"
+        }
+      },
+      "operation_mode": {
+        "name": "Betriebsmodus",
+        "state": {
+          "mode_1": "Modus 1 (nur ELWA, bis 3,5 kW)",
+          "mode_3": "Modus 3 (ELWA + AUX-Relais, bis 6,5 kW)"
+        }
+      },
+      "max_controlled_power": { "name": "Max. konfigurierte Leistung" },
+      "max_available_power": { "name": "Max. aktuell mögliche Leistung" },
+      "serial_number": { "name": "Seriennummer" },
+      "firmware_version": { "name": "Firmware-Version" },
+      "powerstage_firmware_version": { "name": "Firmware-Version (Power Stage)" },
+      "co_controller_firmware_version": { "name": "Firmware-Version (Co-Controller)" },
+      "energy": { "name": "Energie" }
+    },
+    "binary_sensor": {
+      "heating_active": { "name": "Heizt aktiv" },
+      "aux_relay_active": { "name": "AUX-Relais aktiv" },
+      "selv_relay_active": { "name": "SELV-Relais aktiv" },
+      "device_enabled": { "name": "Gerät aktiviert" }
+    },
+    "number": {
+      "power": { "name": "Leistung" },
+      "target_temperature": { "name": "Zieltemperatur" }
+    }
+  }
+}
