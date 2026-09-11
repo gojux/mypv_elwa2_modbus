@@ -4,20 +4,31 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections import deque
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 from typing import Any
 
 from pymodbus.client import AsyncModbusTcpClient
 from pymodbus.exceptions import ModbusException
 
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant
+from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
+from homeassistant.core import Event, HomeAssistant, State, callback
+from homeassistant.exceptions import HomeAssistantError
+from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
+from homeassistant.util import dt as dt_util
 
 from .const import (
+    DEFAULT_AUTO_RATE_LIMIT_SECONDS,
+    DEFAULT_AUTO_RESERVE_WATTS,
+    DEFAULT_AUTO_SMOOTHING_SECONDS,
+    FALLBACK_AUTO_MAX_POWER_WATTS,
     HEATING_STATUS_CODES,
+    LATCH_DEBOUNCE_POLLS,
+    NO_CONTROL_STATUS_CODES,
     REG_BASE,
     REG_CO_CONTROLLER_FW_VERSION,
     REG_CONTROLLER_FW_MAIN_VERSION,
@@ -81,6 +92,9 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
         port: int,
         unit_id: int,
         scan_interval: int,
+        grid_power_entity_id: str | None = None,
+        invert_grid_power_sign: bool = False,
+        default_max_power: int = FALLBACK_AUTO_MAX_POWER_WATTS,
     ) -> None:
         super().__init__(
             hass,
@@ -102,28 +116,106 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
         self._client = AsyncModbusTcpClient(host, port=port)
         self._lock = asyncio.Lock()
 
-        # Manual power set-point requested via the Number entity. The AC
-        # ELWA 2 reverts a Modbus power set-point to automatic control if it
-        # is not refreshed periodically, so it is re-written on every poll
-        # cycle while active (mirrors evcc's heartbeat behaviour). Register
-        # 1000 is explicitly exempt from my-PV's "write at most once a day"
-        # rule, so this is safe to do on every update.
+        # Manual power set-point that is actively re-asserted every poll
+        # cycle (mirrors evcc's heartbeat behaviour, since the AC ELWA 2
+        # reverts an unrefreshed Modbus power set-point to automatic control
+        # after a timeout). Register 1000 is explicitly exempt from my-PV's
+        # "write at most once a day" rule, so this is safe to do on every
+        # update. None means "not actively driving the device" (off): while
+        # off, this integration intentionally stops writing to register
+        # 1000 on every cycle, to avoid fighting the device's own automatic
+        # PV-excess control (see async_set_power / _async_update_latch).
         self.power_setpoint: int | None = None
 
         # Last non-zero power that was explicitly set (via the Power number
-        # entity or the water heater's "on"), persisted to disk so it can be
-        # restored both when switching the water heater back on after an
-        # "off" and after a Home Assistant restart.
+        # entity or the water heater's "on"), so it can be restored when
+        # switching the water heater back on after an "off".
         self.last_power_setpoint: int | None = None
+
+        # Latched on/off state shown by the water heater / power number
+        # entities. Latched rather than derived directly from the live
+        # Status register on every poll, so that normal Heat<->Standby
+        # cycling (e.g. due to fluctuating PV excess) does not flicker the
+        # displayed state - see _async_update_latch().
+        self.is_on: bool = False
+
+        # Consecutive polls that have observed NO_CONTROL_STATUS_CODES /
+        # HEATING_STATUS_CODES in a row, used to debounce the auto-off /
+        # auto-on detection in _async_update_latch symmetrically (see
+        # LATCH_DEBOUNCE_POLLS). Both are reset on every explicit action
+        # (async_set_power), since an explicit action always wins over a
+        # stale streak from before it.
+        self._no_control_streak: int = 0
+        self._heating_streak: int = 0
+
+        # Automatic grid-surplus power control. When enabled (and the water
+        # heater is "on"), every change of `grid_power_entity_id` triggers a
+        # new power calculation instead of waiting for the next poll cycle -
+        # see _async_grid_power_listener / _async_apply_auto_control.
+        self._grid_power_entity_id = grid_power_entity_id
+        self._invert_grid_power_sign = invert_grid_power_sign
+        self.auto_control_enabled: bool = False
+        self.auto_reserve_watts: int = DEFAULT_AUTO_RESERVE_WATTS
+        # Defaults to the configured max_power option; overridden below by
+        # any previously persisted value once async_load_persisted_data runs.
+        self.auto_max_power_watts: int = default_max_power
+        self.auto_rate_limit_seconds: int = DEFAULT_AUTO_RATE_LIMIT_SECONDS
+        self._auto_control_last_write: datetime | None = None
+
+        # Moving-average smoothing window (s) applied to the grid power
+        # entity before it enters the calculation; 0 disables smoothing.
+        # See _compute_smoothed_grid_power.
+        self.auto_smoothing_seconds: int = DEFAULT_AUTO_SMOOTHING_SECONDS
+        self._grid_power_samples: deque[tuple[datetime, float]] = deque()
+
+        # All of the above are persisted to disk so they survive a Home
+        # Assistant restart (see async_load_persisted_data / _async_persist_state).
         self._store: Store[dict[str, Any]] = Store(
             hass, STORAGE_VERSION, f"{STORAGE_KEY_LAST_POWER_SETPOINT}_{entry.entry_id}"
         )
 
     async def async_load_persisted_data(self) -> None:
-        """Load the last manually set power value from disk, if any."""
+        """Load the last manually set power value and on/off state from disk."""
         stored = await self._store.async_load()
         if stored is not None:
             self.last_power_setpoint = stored.get("last_power_setpoint")
+            self.is_on = bool(stored.get("is_on", False))
+            self.auto_control_enabled = bool(stored.get("auto_control_enabled", False))
+            self.auto_reserve_watts = int(
+                stored.get("auto_reserve_watts", DEFAULT_AUTO_RESERVE_WATTS)
+            )
+            self.auto_max_power_watts = int(
+                stored.get("auto_max_power_watts", self.auto_max_power_watts)
+            )
+            self.auto_rate_limit_seconds = int(
+                stored.get("auto_rate_limit_seconds", DEFAULT_AUTO_RATE_LIMIT_SECONDS)
+            )
+            self.auto_smoothing_seconds = int(
+                stored.get("auto_smoothing_seconds", DEFAULT_AUTO_SMOOTHING_SECONDS)
+            )
+
+    async def _async_persist_state(self) -> None:
+        """Persist the on/off and automatic-control state to disk."""
+        await self._store.async_save(
+            {
+                "last_power_setpoint": self.last_power_setpoint,
+                "is_on": self.is_on,
+                "auto_control_enabled": self.auto_control_enabled,
+                "auto_reserve_watts": self.auto_reserve_watts,
+                "auto_max_power_watts": self.auto_max_power_watts,
+                "auto_rate_limit_seconds": self.auto_rate_limit_seconds,
+                "auto_smoothing_seconds": self.auto_smoothing_seconds,
+            }
+        )
+
+    def async_setup_grid_listener(self) -> None:
+        """Start listening for changes of the configured grid power entity."""
+        if not self._grid_power_entity_id:
+            return
+        unsub = async_track_state_change_event(
+            self.hass, [self._grid_power_entity_id], self._async_grid_power_listener
+        )
+        self.entry.async_on_unload(unsub)
 
     async def _async_ensure_connected(self) -> None:
         if not self._client.connected:
@@ -132,6 +224,25 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
                 raise UpdateFailed(
                     f"Cannot connect to MyPV ELWA 2 at {self.host}:{self.port}"
                 )
+
+    def _reset_connection(self) -> None:
+        """Force-close the Modbus connection so the next call reconnects.
+
+        pymodbus's `client.connected` does not always reliably reflect a
+        stale/dead TCP connection (e.g. after the device's own Modbus server
+        silently drops it, or a NAT/router in between times it out).
+        Without this, `_async_ensure_connected` would see `connected` still
+        True and keep retrying against the same broken connection every poll
+        cycle indefinitely - which looks like sensors "freezing" at their
+        last successfully-read value, since a failed poll leaves
+        `coordinator.data` untouched.
+        """
+        _LOGGER.debug(
+            "Resetting Modbus connection to %s:%s after a communication error",
+            self.host,
+            self.port,
+        )
+        self._client.close()
 
     async def _read_holding_registers(self, address: int, count: int) -> list[int]:
         try:
@@ -144,6 +255,12 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
             )
         if result.isError():
             raise UpdateFailed(f"Modbus error reading register {address}: {result}")
+        _LOGGER.debug(
+            "Read from %s:%s: %s",
+            self.host,
+            self.port,
+            dict(zip(range(address, address + count), result.registers)),
+        )
         return result.registers
 
     async def _write_registers(self, address: int, values: list[int]) -> None:
@@ -157,23 +274,87 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
             )
         if result.isError():
             raise UpdateFailed(f"Modbus error writing register {address}: {result}")
+        _LOGGER.debug(
+            "Wrote to %s:%s: %s",
+            self.host,
+            self.port,
+            dict(zip(range(address, address + len(values)), values)),
+        )
 
-    async def async_set_power(self, watts: int) -> None:
-        """Write a manual power set-point and keep re-asserting it.
-
-        Non-zero values are remembered as `last_power_setpoint` and
-        persisted to disk, so that e.g. the water heater's "on" can restore
-        whatever power was last requested - including after a Home Assistant
-        restart. Setting 0 (off) intentionally does not overwrite it.
-        """
-        watts = max(0, int(watts))
+    async def _async_write_power_register(self, watts: int) -> None:
+        """Write register 1000, resetting the connection on any I/O error."""
         async with self._lock:
             await self._async_ensure_connected()
-            await self._write_registers(REG_POWER, [watts])
-        self.power_setpoint = watts
-        if watts > 0 and watts != self.last_power_setpoint:
+            try:
+                await self._write_registers(REG_POWER, [watts])
+            except (ModbusException, OSError) as err:
+                self._reset_connection()
+                raise UpdateFailed(f"Error communicating with device: {err}") from err
+
+    async def async_set_power(self, watts: int) -> None:
+        """Write a manual power set-point (on) or turn the device off.
+
+        `watts > 0` is treated as "on": the value is written once, then kept
+        alive by being re-asserted every poll cycle, and remembered as
+        `last_power_setpoint` (persisted, so the water heater's "on" can
+        restore it later - including after a Home Assistant restart).
+
+        `watts == 0` is treated as "off": 0 is written exactly once. Unlike
+        the "on" case, this integration then stops writing to register 1000
+        on every poll cycle while off, so it doesn't keep fighting any
+        automatic PV-excess control the device performs on its own.
+        `last_power_setpoint` is intentionally left untouched so the target
+        power is remembered for the next "on".
+
+        This is for *explicit* on/off requests only (Power number, water
+        heater). Automatic grid-surplus control uses `_async_write_auto_power`
+        instead, since a calculated 0 W is a normal, transient output level
+        that must not turn the water heater off.
+
+        Note that turning the water heater off does *not* disable the "Auto
+        control" switch itself - it only pauses the underlying function
+        (see `_async_apply_auto_control`'s `not self.is_on` guard). If the
+        switch is still on, automatic control resumes by itself as soon as
+        the water heater is turned back on, without needing to be
+        re-enabled.
+        """
+        watts = max(0, int(watts))
+        await self._async_write_power_register(watts)
+        if watts > 0:
+            self.power_setpoint = watts
             self.last_power_setpoint = watts
-            await self._store.async_save({"last_power_setpoint": watts})
+            self.is_on = True
+        else:
+            self.power_setpoint = None
+            self.is_on = False
+        # An explicit action always wins over auto-detection in either
+        # direction: reset both debounce streaks so a stale streak from
+        # before this call (or the device's Status register lagging behind
+        # the write we just made, in *either* direction) can't immediately
+        # undo it on the next poll(s).
+        self._no_control_streak = 0
+        self._heating_streak = 0
+        await self._async_persist_state()
+        await self.async_request_refresh()
+
+    async def async_set_device_enabled(self, enabled: bool) -> None:
+        """Enable or disable the device itself (register 1081).
+
+        Unlike REG_POWER, this is written exactly once per explicit call and
+        is *never* re-asserted on a poll cycle: per my-PV's documentation,
+        register 1081 must not be written more than once a day to protect
+        the device's non-volatile memory. This is meant for occasional,
+        manual control (a Switch entity) - do not wire it into automations
+        that could toggle it frequently.
+        """
+        value = 1 if enabled else 0
+        async with self._lock:
+            await self._async_ensure_connected()
+            try:
+                await self._write_registers(REG_DEVICE_STATE, [value])
+            except (ModbusException, OSError) as err:
+                self._reset_connection()
+                raise UpdateFailed(f"Error communicating with device: {err}") from err
         await self.async_request_refresh()
 
     async def async_set_target_temperature(self, celsius: float) -> None:
@@ -186,8 +367,227 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
         raw = max(0, int(round(celsius * 10)))
         async with self._lock:
             await self._async_ensure_connected()
-            await self._write_registers(REG_TARGET_TEMPERATURE, [raw])
+            try:
+                await self._write_registers(REG_TARGET_TEMPERATURE, [raw])
+            except (ModbusException, OSError) as err:
+                self._reset_connection()
+                raise UpdateFailed(f"Error communicating with device: {err}") from err
         await self.async_request_refresh()
+
+    async def async_set_auto_control_enabled(self, enabled: bool) -> None:
+        """Enable or disable automatic grid-surplus power control.
+
+        This is a standing preference, independent of the water heater's
+        current on/off state: it can be turned on while the water heater
+        happens to be off right now, and simply stays paused (does nothing)
+        until the water heater is turned on - see
+        `_async_apply_auto_control`'s `not self.is_on` guard. Turning the
+        water heater off later does not turn this switch off either; it
+        only pauses the function again.
+
+        Turning it on still requires a grid power entity to be configured
+        (Options), so the switch never silently does nothing for a reason
+        that isn't obviously fixable from the water heater itself.
+        """
+        if enabled and not self._grid_power_entity_id:
+            raise HomeAssistantError(
+                "Configure a grid power entity in the integration's options"
+                " before enabling automatic control"
+            )
+        self.auto_control_enabled = enabled
+        await self._async_persist_state()
+        self.async_update_listeners()
+
+    async def async_set_auto_reserve(self, watts: int) -> None:
+        """Set the grid-surplus reserve (W) automatic control always leaves unused."""
+        self.auto_reserve_watts = max(0, int(watts))
+        await self._async_persist_state()
+        self.async_update_listeners()
+
+    async def async_set_auto_max_power(self, watts: int) -> None:
+        """Set the upper power limit (W) automatic control may request."""
+        self.auto_max_power_watts = max(0, int(watts))
+        await self._async_persist_state()
+        self.async_update_listeners()
+
+    async def async_set_auto_rate_limit(self, seconds: int) -> None:
+        """Set the minimum time (s) between two automatic-control writes."""
+        self.auto_rate_limit_seconds = max(1, int(seconds))
+        await self._async_persist_state()
+        self.async_update_listeners()
+
+    async def async_set_auto_smoothing(self, seconds: int) -> None:
+        """Set the moving-average smoothing window (s); 0 disables it."""
+        self.auto_smoothing_seconds = max(0, int(seconds))
+        self._grid_power_samples.clear()
+        await self._async_persist_state()
+        self.async_update_listeners()
+
+    def _compute_smoothed_grid_power(self, raw_value: float, now: datetime) -> float:
+        """Smooth the (already sign-corrected) raw grid power value.
+
+        Result = min(moving_average(raw_value over auto_smoothing_seconds),
+        raw_value), compared as signed numbers (never absolute value) - so
+        e.g. -10 counts as smaller than -5. The moving average smooths out
+        brief spikes in surplus so the ELWA doesn't needlessly readjust for
+        them; the min() then makes sure a sudden *drop* in surplus (or a
+        swing into grid import) is still acted on immediately, since in
+        that case the average - not yet caught up - would otherwise be
+        higher than reality and make automatic control overconsume.
+        """
+        if self.auto_smoothing_seconds <= 0:
+            self._grid_power_samples.clear()
+            return raw_value
+
+        self._grid_power_samples.append((now, raw_value))
+        cutoff = now - timedelta(seconds=self.auto_smoothing_seconds)
+        while self._grid_power_samples and self._grid_power_samples[0][0] < cutoff:
+            self._grid_power_samples.popleft()
+
+        average = sum(value for _, value in self._grid_power_samples) / len(
+            self._grid_power_samples
+        )
+        return min(average, raw_value)
+
+    @callback
+    def _async_grid_power_listener(self, event: Event) -> None:
+        """Schedule handling of a grid power entity state change."""
+        new_state: State | None = event.data["new_state"]
+        self.hass.async_create_task(self._async_apply_auto_control(new_state))
+
+    async def _async_apply_auto_control(self, grid_state: State | None) -> None:
+        """Recompute and write a new power set-point from the grid sensor.
+
+        Formula: new_power = current_power + grid_surplus - reserve, clamped
+        to [0, auto_max_power_watts] (and the device's own max_controlled_power,
+        if reported). This is a simple proportional zero-export-with-headroom
+        controller: whatever surplus is currently measured at the grid
+        connection (which already reflects the ELWA's own consumption) is
+        added to the current set-point, minus the configured reserve, so the
+        loop converges towards leaving exactly `auto_reserve_watts` of
+        surplus unused. `grid_surplus` here is the smoothed value from
+        `_compute_smoothed_grid_power`, not the raw sensor reading.
+        """
+        if not self.auto_control_enabled or not self.is_on:
+            return
+        if grid_state is None or grid_state.state in (STATE_UNKNOWN, STATE_UNAVAILABLE):
+            return
+        try:
+            raw_grid_power = float(grid_state.state)
+        except (TypeError, ValueError):
+            _LOGGER.debug(
+                "Auto control: could not parse grid power state %r", grid_state.state
+            )
+            return
+        # The sign inversion (if configured) is applied first, so both the
+        # smoothing history and the min() comparison already work with the
+        # same sign convention as the rest of the calculation.
+        if self._invert_grid_power_sign:
+            raw_grid_power = -raw_grid_power
+
+        now = dt_util.utcnow()
+        grid_power = self._compute_smoothed_grid_power(raw_grid_power, now)
+
+        if (
+            self._auto_control_last_write is not None
+            and (now - self._auto_control_last_write).total_seconds()
+            < self.auto_rate_limit_seconds
+        ):
+            return
+
+        base = self.power_setpoint
+        if base is None:
+            base = self.data.power if self.data is not None else 0
+
+        max_power = self.auto_max_power_watts
+        if self.data is not None and self.data.max_controlled_power:
+            max_power = min(max_power, self.data.max_controlled_power)
+
+        new_power = base + grid_power - self.auto_reserve_watts
+        new_power = max(0, min(int(round(new_power)), max_power))
+
+        self._auto_control_last_write = now
+        _LOGGER.debug(
+            "Auto control: grid_raw=%.1f W, grid_smoothed=%.1f W, reserve=%s W,"
+            " base=%s W -> new power=%s W",
+            raw_grid_power,
+            grid_power,
+            self.auto_reserve_watts,
+            base,
+            new_power,
+        )
+        await self._async_write_auto_power(new_power)
+
+    async def _async_write_auto_power(self, watts: int) -> None:
+        """Write a power set-point computed by automatic control.
+
+        Unlike `async_set_power` (used for explicit user on/off actions),
+        this never turns the water heater off or disables automatic control
+        just because the calculated value happens to be 0 W - e.g. "no
+        surplus right now" is a perfectly normal, transient output level
+        while automatic control keeps running and watching for surplus to
+        return. It also skips the full `async_request_refresh()` (a fresh
+        Modbus read of all registers) that `async_set_power` triggers, since
+        that would be wasteful if the grid entity updates frequently -
+        entities are instead updated locally via `async_update_listeners()`.
+        """
+        await self._async_write_power_register(watts)
+        self.power_setpoint = watts
+        if watts > 0:
+            self.last_power_setpoint = watts
+        await self._async_persist_state()
+        self.async_update_listeners()
+
+    async def _async_update_latch(self, status_code: int) -> None:
+        """Update the latched on/off state from an autonomously observed Status.
+
+        The water heater's "on" state is latched rather than derived fresh
+        from the Status register on every poll: once on, normal Heat<->
+        Standby cycling (e.g. due to fluctuating PV excess) must not flip it
+        back off by itself, or the displayed state (and the Power number's
+        commanded value) would flicker. It can only become:
+        - "off": through an explicit Home Assistant action (see
+          async_set_power), or autonomously when the device reports it has
+          lost control / is disabled (NO_CONTROL_STATUS_CODES) for at least
+          LATCH_DEBOUNCE_POLLS polls in a row.
+        - "on": through an explicit Home Assistant action, or autonomously
+          when the device starts heating (HEATING_STATUS_CODES) for at least
+          LATCH_DEBOUNCE_POLLS polls in a row while it was previously
+          considered off - e.g. the device's own automatic PV-excess control
+          kicking in without Home Assistant's involvement.
+
+        The debounce is applied symmetrically in both directions, because
+        the device does not update its Status register instantly after a
+        Power write in *either* direction: the poll triggered right after an
+        explicit "on" typically still observes the previous "no_control"
+        status for a moment, and the poll right after an explicit "off"
+        typically still observes the previous "heat"/"boost_heat" status for
+        a moment. Without the debounce, that very refresh would immediately
+        undo whichever action was just requested.
+        """
+        if status_code in NO_CONTROL_STATUS_CODES:
+            self._heating_streak = 0
+            self._no_control_streak += 1
+            if self._no_control_streak >= LATCH_DEBOUNCE_POLLS and (
+                self.is_on or self.power_setpoint is not None
+            ):
+                self.is_on = False
+                self.power_setpoint = None
+                # The "Auto control" switch itself is left untouched here -
+                # only the underlying function pauses while is_on is False
+                # (see _async_apply_auto_control's guard). It resumes by
+                # itself once is_on becomes True again.
+                await self._async_persist_state()
+        elif status_code in HEATING_STATUS_CODES:
+            self._no_control_streak = 0
+            self._heating_streak += 1
+            if self._heating_streak >= LATCH_DEBOUNCE_POLLS and not self.is_on:
+                self.is_on = True
+                await self._async_persist_state()
+        else:
+            # standby, heat_finished, legionella boost, blocked, faults, ...
+            self._no_control_streak = 0
+            self._heating_streak = 0
 
     async def _async_update_data(self) -> MyPVElwa2Data:
         async with self._lock:
@@ -197,6 +597,7 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
                     await self._write_registers(REG_POWER, [self.power_setpoint])
                 registers = await self._read_holding_registers(REG_BASE, REG_COUNT)
             except (ModbusException, OSError) as err:
+                self._reset_connection()
                 raise UpdateFailed(f"Error communicating with device: {err}") from err
 
         def reg(address: int) -> int:
@@ -205,6 +606,8 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
         power = reg(REG_POWER)
         status_code = reg(REG_STATUS)
         relay_state = reg(REG_RELAY_STATE)
+
+        await self._async_update_latch(status_code)
 
         return MyPVElwa2Data(
             power=power,

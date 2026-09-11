@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 from homeassistant.components.water_heater import (
@@ -17,6 +18,8 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import CONF_MAX_POWER, DEFAULT_MAX_POWER, DOMAIN
 from .coordinator import MyPVElwa2ModbusCoordinator
 from .entity import MyPVElwa2Entity
+
+_LOGGER = logging.getLogger(__name__)
 
 
 async def async_setup_entry(
@@ -50,12 +53,24 @@ class MyPVElwa2WaterHeater(MyPVElwa2Entity, WaterHeaterEntity):
     survives a Home Assistant restart. The very first time it is ever turned
     on - before any power has been set - it falls back to the device's
     configured max. power (register 1014), or the max power configured in
-    the integration's options if that isn't available yet.
+    the integration's options if that isn't available yet. While on, the
+    coordinator keeps re-asserting this value on every poll cycle (see
+    `coordinator.power_setpoint`), since the AC ELWA 2 reverts an unrefreshed
+    Modbus power set-point to automatic control after a timeout.
 
-    "Off" writes 0. This is the same register the AC ELWA 2 reverts to
-    automatic control if it isn't refreshed periodically, so the coordinator
-    re-asserts an active set-point on every poll cycle (see
-    `coordinator.power_setpoint`).
+    "Off" writes 0 exactly once - unlike "on", it is then *not* re-asserted
+    on every poll cycle, so Home Assistant doesn't keep fighting the
+    device's own automatic PV-excess control while off.
+
+    The on/off state itself is latched (`coordinator.is_on`), not derived
+    fresh from the Status register on every poll: besides the explicit
+    actions above, it can only change autonomously in two cases - it becomes
+    "on" if the device starts heating (Status = Heat/Boost heat) while
+    previously "off" (e.g. its own PV-excess control kicking in), and it
+    becomes "off" if the device reports it has lost control or is disabled
+    (Status = no_control/device_disabled). Normal Heat<->Standby cycling in
+    between does not flip it back off by itself. See
+    `coordinator._async_update_latch` for the exact rules.
     """
 
     _attr_name = None
@@ -91,20 +106,19 @@ class MyPVElwa2WaterHeater(MyPVElwa2Entity, WaterHeaterEntity):
 
     @property
     def current_operation(self) -> str:
-        """Return the current operation mode, based on the Status register."""
-        data = self.coordinator.data
-        if data is not None and data.heating_active:
-            return STATE_ELECTRIC
-        return STATE_OFF
+        """Return the current, latched operation mode (see class docstring)."""
+        return STATE_ELECTRIC if self.coordinator.is_on else STATE_OFF
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
         """Set a new target temperature (writes register 1002)."""
         if (temperature := kwargs.get(ATTR_TEMPERATURE)) is None:
             return
+        _LOGGER.debug("Water heater: setting target temperature to %s°C", temperature)
         await self.coordinator.async_set_target_temperature(float(temperature))
 
     async def async_set_operation_mode(self, operation_mode: str) -> None:
         """Set a new operation mode."""
+        _LOGGER.debug("Water heater: operation mode set to %s", operation_mode)
         if operation_mode == STATE_OFF:
             await self.async_turn_off()
         else:
@@ -114,15 +128,21 @@ class MyPVElwa2WaterHeater(MyPVElwa2Entity, WaterHeaterEntity):
         """Turn the water heater on, restoring the last requested power."""
         if self.coordinator.last_power_setpoint:
             power = self.coordinator.last_power_setpoint
+            source = "last_power_setpoint"
         else:
             data = self.coordinator.data
-            power = (
-                data.max_controlled_power
-                if data is not None and data.max_controlled_power
-                else self._fallback_max_power
-            )
+            if data is not None and data.max_controlled_power:
+                power = data.max_controlled_power
+                source = "device's max_controlled_power"
+            else:
+                power = self._fallback_max_power
+                source = "configured fallback max power"
+        _LOGGER.debug(
+            "Water heater: turning on, requesting %s W (source: %s)", power, source
+        )
         await self.coordinator.async_set_power(power)
 
     async def async_turn_off(self, **kwargs: Any) -> None:
         """Turn the water heater off (writes 0 W to the Power register)."""
+        _LOGGER.debug("Water heater: turning off")
         await self.coordinator.async_set_power(0)

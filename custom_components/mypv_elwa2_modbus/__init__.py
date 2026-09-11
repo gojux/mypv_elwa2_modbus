@@ -9,8 +9,13 @@ from homeassistant.const import CONF_HOST, CONF_PORT, Platform
 from homeassistant.core import HomeAssistant
 
 from .const import (
+    CONF_GRID_POWER_ENTITY_ID,
+    CONF_INVERT_GRID_POWER_SIGN,
+    CONF_MAX_POWER,
     CONF_SCAN_INTERVAL,
     CONF_UNIT_ID,
+    DEFAULT_INVERT_GRID_POWER_SIGN,
+    DEFAULT_MAX_POWER,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DEFAULT_UNIT_ID,
@@ -24,6 +29,7 @@ PLATFORMS: list[Platform] = [
     Platform.SENSOR,
     Platform.BINARY_SENSOR,
     Platform.NUMBER,
+    Platform.SWITCH,
     Platform.WATER_HEATER,
 ]
 
@@ -39,9 +45,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         port=entry.data.get(CONF_PORT, DEFAULT_PORT),
         unit_id=entry.data.get(CONF_UNIT_ID, DEFAULT_UNIT_ID),
         scan_interval=scan_interval,
+        grid_power_entity_id=entry.options.get(CONF_GRID_POWER_ENTITY_ID),
+        invert_grid_power_sign=entry.options.get(
+            CONF_INVERT_GRID_POWER_SIGN, DEFAULT_INVERT_GRID_POWER_SIGN
+        ),
+        default_max_power=entry.options.get(CONF_MAX_POWER, DEFAULT_MAX_POWER),
     )
     await coordinator.async_load_persisted_data()
     await coordinator.async_config_entry_first_refresh()
+    coordinator.async_setup_grid_listener()
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = coordinator
 

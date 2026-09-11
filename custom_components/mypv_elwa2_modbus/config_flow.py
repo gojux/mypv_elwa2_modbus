@@ -11,11 +11,15 @@ from pymodbus.client import AsyncModbusTcpClient
 from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResult, OptionsFlow
 from homeassistant.const import CONF_HOST, CONF_PORT
 from homeassistant.core import callback
+from homeassistant.helpers import selector
 
 from .const import (
+    CONF_GRID_POWER_ENTITY_ID,
+    CONF_INVERT_GRID_POWER_SIGN,
     CONF_MAX_POWER,
     CONF_SCAN_INTERVAL,
     CONF_UNIT_ID,
+    DEFAULT_INVERT_GRID_POWER_SIGN,
     DEFAULT_MAX_POWER,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
@@ -180,6 +184,21 @@ class MyPVElwa2ModbusOptionsFlow(OptionsFlow):
                     CONF_MAX_POWER,
                     default=options.get(CONF_MAX_POWER, DEFAULT_MAX_POWER),
                 ): vol.All(vol.Coerce(int), vol.Range(min=100, max=10000)),
+                vol.Optional(
+                    CONF_GRID_POWER_ENTITY_ID,
+                    description={
+                        "suggested_value": options.get(CONF_GRID_POWER_ENTITY_ID)
+                    },
+                ): vol.Any(
+                    selector.EntitySelector(selector.EntitySelectorConfig(domain="sensor")),
+                    None,
+                ),
+                vol.Optional(
+                    CONF_INVERT_GRID_POWER_SIGN,
+                    default=options.get(
+                        CONF_INVERT_GRID_POWER_SIGN, DEFAULT_INVERT_GRID_POWER_SIGN
+                    ),
+                ): bool,
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)

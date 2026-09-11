@@ -44,12 +44,9 @@ BINARY_SENSOR_DESCRIPTIONS: tuple[MyPVElwa2BinarySensorEntityDescription, ...] =
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda data: data.selv_relay_active,
     ),
-    MyPVElwa2BinarySensorEntityDescription(
-        key="device_enabled",
-        translation_key="device_enabled",
-        entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda data: data.device_enabled,
-    ),
+    # "device_enabled" used to be a read-only diagnostic here; it is now a
+    # controllable Switch entity instead (see switch.py), since register
+    # 1081 can be written manually to explicitly enable/disable the device.
 )
 
 

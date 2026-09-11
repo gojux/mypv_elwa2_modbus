@@ -42,7 +42,7 @@ Getestet und entwickelt für den **my-PV AC ELWA 2**. Andere my-PV-Geräte (AC T
 2. „MyPV ELWA 2 Modbus (unofficial)" auswählen.
 3. Host/IP-Adresse, Port (Standard `502`) und Modbus-Unit-ID (Standard `1`) eingeben.
 
-Über die Optionen der Integration lassen sich zusätzlich das **Abfrageintervall** (Standard 5 s) und eine **Fallback-Maximalleistung** für die Power-Number-Entity einstellen.
+Über die Optionen der Integration lassen sich zusätzlich das **Abfrageintervall** (Standard 5 s), eine **Fallback-Maximalleistung** für die Power-Number-Entity sowie – optional – eine **Netzeinspeisung-Entity** für die [automatische Steuerung](#automatische-netzeinspeisung-steuerung) einstellen.
 
 ### IP-Adresse/Port später ändern (Reconfigure)
 
@@ -71,36 +71,83 @@ Die Integration liest dabei die **Seriennummer** des Geräts (Register 1018–10
 | Sensor | Firmware version (power stage) / (co-controller) | Firmware-Versionen der Power-Stage- bzw. Co-Controller-Baugruppe (diagnostisch, standardmäßig deaktiviert) |
 | Binary Sensor | Heating active | Gerät heizt aktuell aktiv (Status = Heat/Boost heat) |
 | Binary Sensor | AUX relay active / SELV relay active | Relaisstatus (diagnostisch) |
-| Binary Sensor | Device enabled | Gerät ist nicht deaktiviert (Register 1081, diagnostisch, siehe unten) |
 | Number | **Power** ⭐ | Ausgangsleistung direkt in Watt vorgeben – **nicht Teil der offiziellen Integration** |
 | Number | Target temperature | Ziel-/Boost-Temperatur vorgeben (analog zur Wassertemperatur-Einstellung der offiziellen App) |
+| Number | **Auto control reserve** ⭐ | Überschuss (W), der bei automatischer Steuerung immer unangetastet bleiben soll (Standard 100 W) |
+| Number | **Auto control max. power** ⭐ | Obergrenze (W), bis zu der die automatische Steuerung regeln darf |
+| Number | **Auto control rate limit** ⭐ | Mindestabstand (s) zwischen zwei Schreibvorgängen der automatischen Steuerung (Standard 1 s) |
+| Number | **Auto control smoothing** ⭐ | Glättungszeitraum (s) für den Netzeinspeisung-Sensor, `0`–`300`, Standard 5 s (`0` = aus) |
+| Switch | **Device enabled** ⭐ | Gerät selbst aktivieren/deaktivieren (Register 1081, siehe unten) – **nicht Teil der offiziellen Integration** |
+| Switch | **Auto control** ⭐ | Automatische Netzeinspeisung-Steuerung aktivieren/deaktivieren – **nicht Teil der offiziellen Integration** |
 | Water Heater | ELWA 2 | Ist-Temperatur (T1), Soll-Temperatur sowie Ein (`electric`) / Aus – wie in der offiziellen App |
 
 ⭐ = zusätzliche Funktionalität, die über den Funktionsumfang der offiziellen my-PV App/Integration hinausgeht.
 
-### Hinweis zur Power-Number-Entity
+### Optimistisches Caching: Power-Number- und Water-Heater-Entity
 
-Der AC ELWA 2 kann einen per Modbus gesetzten Leistungs-Sollwert nach einiger Zeit automatisch wieder verwerfen (Watchdog-Verhalten, siehe Register `1004`, „Power timeout"). Diese Integration schreibt einen aktiv gesetzten Sollwert deshalb bei jedem Abfragezyklus erneut, solange kein neuer Wert gesetzt wird – vergleichbar mit dem Heartbeat-Mechanismus, den z. B. [evcc](https://github.com/evcc-io/evcc) für dasselbe Gerät verwendet. Register `1000` ist laut offizieller Dokumentation explizit von der Einschränkung „max. 1x täglich schreiben" ausgenommen, häufiges Schreiben ist also unbedenklich.
+Leistungs-Sollwert und Ein/Aus-Status würden bei einer rein Live-Register-basierten Anzeige leicht "hin- und herspringen" – z. B. weil der `Status`-Code bei schwankendem PV-Überschuss normal zwischen „Heat"/„Boost heat" und „Standby" pendelt, oder weil kurz nach einem Schreibvorgang die Live-Ablesung noch nicht den gerade gesetzten Wert zeigt. Diese Integration vermeidet das durch zwei Mechanismen:
 
-### Hinweis zur Water-Heater-Entity und zum Ein-/Ausschalten
+**1. Power-Number-Entity zeigt den kommandierten, nicht den live gemessenen Wert.** Solange wir selbst einen Sollwert aktiv steuern, zeigt die Entity genau diesen Wert (`coordinator.power_setpoint`) statt der Live-Ablesung von Register `1000`. Ist die ELWA aus, wird `0` angezeigt. Heizt das Gerät autonom (siehe Punkt 2), zeigt die Entity die Live-Ablesung, da in diesem Fall kein eigener Sollwert aktiv ist.
 
-Die AC ELWA 2 besitzt kein eigenes Ein/Aus-Register über Modbus. Ein- und Ausschalten erfolgt deshalb – wie bei der Power-Number-Entity – über das **Power-Register (`1000`)**:
+**2. Der Ein/Aus-Status der Water-Heater-Entity ist ein "Latch"**, kein direktes Abbild des Status-Registers:
 
-- **Ein** (`electric`): Es wird der **zuletzt gesetzte Leistungswert** (siehe unten) in Register `1000` geschrieben. Wurde noch nie ein Wert gesetzt (z. B. beim allerersten Einschalten nach der Einrichtung), wird ersatzweise die am Gerät konfigurierte maximale Leistung (Register `1014`, Fallback: die in den Optionen hinterlegte Maximalleistung) verwendet.
-- **Aus**: Es wird `0` in Register `1000` geschrieben.
-- Der angezeigte Betriebszustand (`electric`/`off`) wird aus dem **Status-Register (`1003`)** abgeleitet (aktiv bei den offiziellen Status-Codes „Heat" und „Boost heat").
+- **Ein** (`electric`) wird gesetzt durch: eine explizite Aktion in Home Assistant (Water-Heater „Ein" oder Power-Number > 0 W), **oder** automatisch erkannt, wenn das Gerät von „Aus" auf einen heizenden Status wechselt (Status-Code „Heat" oder „Boost heat") – z. B. wenn die geräteeigene automatische PV-Überschuss-Regelung von selbst zu heizen beginnt, ohne dass Home Assistant etwas geschrieben hätte.
+- **Aus** wird **nur** gesetzt durch: eine explizite Aktion in Home Assistant (Water-Heater „Aus" oder Power-Number auf `0`), **oder** automatisch erkannt, wenn das Gerät „kein Steuersignal" (`no_control`) oder „deaktiviert" (`device_disabled`) meldet.
+- Ein normales Pendeln zwischen „Heat" und „Standby" während laufendem Betrieb ändert den Ein/Aus-Status **nicht** – dadurch entsteht kein Flackern.
 
-Diese Logik entspricht der `Enable()`-Implementierung in [evcc](https://github.com/evcc-io/evcc/blob/master/charger/mypv.go). Bewusst **nicht** verwendet wird das Gerät-eigene Register `1012` („Boost activate", der physische Boost-Backup-Knopf bzw. `/control.html?boost=1`): Dieses schaltet das Gerät in einen Modus, der elektrisch mit voller Leistung heizt und dabei **PV-Überschuss ignoriert** – das widerspricht dem Zweck einer normalen Ein/Aus-Steuerung. Das Schreiben in Register `1000` fügt sich dagegen in dieselbe Steuerungslogik ein wie die Power-Number-Entity und ein eventuell übergeordnetes Energiemanagementsystem, das PV-Überschuss weiterhin berücksichtigen kann.
+**Kein Dauerschreiben mehr im Aus-Zustand:** Solange „Ein", schreibt die Integration den Leistungs-Sollwert wie bisher bei jedem Abfragezyklus erneut in Register `1000` (Heartbeat, s.u.). Solange „Aus", wird beim Übergang genau **einmal** `0` geschrieben und danach – bis zur nächsten expliziten Aktion – **nicht** mehr weiter auf Register `1000` geschrieben, damit Home Assistant eine eventuelle automatische PV-Überschuss-Regelung des Geräts nicht fortlaufend überschreibt.
 
-### Wiederherstellung des zuletzt gesetzten Leistungswerts
+Ein- und Ausschalten erfolgt dabei weiterhin über dasselbe **Power-Register (`1000`)**, das auch die Power-Number-Entity nutzt (Ein: zuletzt gesetzter Leistungswert bzw. Fallback auf die Maximalleistung; Aus: `0`) – analog zur `Enable()`-Implementierung in [evcc](https://github.com/evcc-io/evcc/blob/master/charger/mypv.go). Bewusst **nicht** verwendet wird das Gerät-eigene Register `1012` („Boost activate", physischer Boost-Backup-Knopf bzw. `/control.html?boost=1`), da dieses den PV-Überschuss ignoriert und mit voller Leistung heizt.
 
-Jeder über die Power-Number-Entity oder die Water-Heater-Entity gesetzte Leistungswert > 0 W wird als „zuletzt gesetzter Wert" gemerkt und in Home Assistants lokalem Storage (`.storage/`) abgelegt. Wird die ELWA über die Water-Heater-Entity aus- und anschließend wieder eingeschaltet, wird genau dieser Wert erneut geschrieben – auch dann, wenn Home Assistant zwischenzeitlich neu gestartet wurde. Das Ausschalten (Wert `0`) überschreibt den gemerkten Wert bewusst nicht.
+### Wiederherstellung nach einem Home-Assistant-Neustart
+
+Sowohl der **zuletzt gesetzte Leistungswert** (jeder über Power-Number oder Water-Heater gesetzte Wert > 0 W) als auch der **Ein/Aus-Status** werden in Home Assistants lokalem Storage (`.storage/`) abgelegt und beim Start wiederhergestellt. Ein Neustart während des Betriebs führt also nicht dazu, dass die Water-Heater-Entity fälschlich auf „Aus" zurückfällt, selbst wenn das Gerät im Moment des Neustarts gerade im (normalen) Standby zwischen zwei Heizphasen ist. Das Ausschalten überschreibt den gemerkten Leistungswert bewusst nicht.
+
+## Automatische Netzeinspeisung-Steuerung
+
+Statt die Leistung über eine eigene Automation zu berechnen und zu setzen, kann die Integration selbst auf Änderungen eines Netzeinspeisung-Sensors reagieren und die Leistung direkt berechnen und schreiben – ereignisgesteuert, nicht erst beim nächsten Abfragezyklus.
+
+### Einrichtung
+
+1. In den **Optionen** der Integration die **Netzeinspeisung-Entity** auswählen (ein Sensor in Watt). Standard-Vorzeichenkonvention: positiv = Überschuss/Einspeisung, negativ = Bezug. Nutzt dein Sensor die umgekehrte Konvention, aktiviere **„Vorzeichen der Netzeinspeisung-Entity umkehren"**.
+2. Über die neue **„Auto control"-Switch-Entity** die automatische Steuerung aktivieren.
+
+Solange „Auto control" aktiv ist, werden manuelle Änderungen an der Power-Number-Entity **ignoriert** – sie zeigt stattdessen fortlaufend den von der automatischen Steuerung berechneten Wert an.
+
+### Berechnung
+
+Bei jeder Änderung der Netzeinspeisung-Entity wird berechnet:
+
+```
+Netzeinspeisung_glatt = min( gleitender_Durchschnitt(Netzeinspeisung_roh, Glättungszeitraum), Netzeinspeisung_roh )
+neue_Leistung          = aktuelle_Leistung + Netzeinspeisung_glatt − Reserve
+```
+
+Die Vorzeichen-Umkehr (falls aktiviert) wird **vor** dieser Berechnung angewendet, sodass Glättung, Minimalwert-Bildung und die Leistungsformel durchgängig mit derselben Vorzeichenkonvention arbeiten.
+
+- **Auto control smoothing** (Number-Entity, Standard 5 s, `0` = deaktiviert): Zeitraum für einen gleitenden Durchschnitt über die rohen Netzeinspeisung-Werte. Damit kurze Sprünge nach oben (z. B. eine vorbeiziehende Wolkenlücke) nicht sofort zu unnötigem Nachregeln führen, wird nicht der Durchschnitt direkt verwendet, sondern das **Minimum aus Durchschnitt und aktuellem Rohwert** – vorzeichenrichtig verglichen, also z. B. `-10` kleiner als `-5`, nicht nach Betrag. Ein plötzlicher **Einbruch** des Überschusses (oder ein Umschwung in Netzbezug) schlägt dadurch trotz Glättung **sofort** durch, da in diesem Fall der (noch nicht angepasste) Durchschnitt höher als der aktuelle Rohwert wäre und deshalb nicht verwendet wird.
+- **Reserve** (Number-Entity „Auto control reserve", Standard 100 W): der Überschuss, der immer unangetastet bleiben soll – ein Sicherheitsabstand gegen Netzbezug durch Mess- oder Regelverzögerung.
+- **Auto control max. power**: harte Obergrenze für den berechneten Wert (zusätzlich zur ggf. vom Gerät gemeldeten Leistungsgrenze).
+- **Auto control rate limit** (Standard 1 s): Mindestabstand zwischen zwei Schreibvorgängen, falls die Netzeinspeisung-Entity sehr häufig aktualisiert. Die Glättung läuft davon unabhängig bei jeder Sensor-Aktualisierung weiter, auch wenn ein einzelner Durchlauf wegen des Rate-Limits nicht zu einem Schreibvorgang führt.
+
+Das ist ein einfacher proportionaler Regler mit Reserve/Totzone: Bei Überschuss über der Reserve wird die Leistung erhöht, bei Überschuss unter der Reserve (oder Netzbezug) verringert – der Regelkreis pendelt sich so ein, dass genau die konfigurierte Reserve an Überschuss ins Netz fließt.
+
+### Zusammenspiel mit Wasser-Heater und manueller Steuerung
+
+- **Der „Auto control"-Schalter ist eine dauerhafte Einstellung, unabhängig vom Ein/Aus-Zustand des Wasser-Heaters.** Ist die Wasser-Heater-Entity „Aus" (egal ob explizit ausgeschaltet oder automatisch als „Aus" erkannt, z. B. bei `no_control`/`device_disabled`), **pausiert** lediglich die Funktion – es wird nichts mehr an die ELWA geschrieben. Der Schalter selbst bleibt dabei eingeschaltet.
+- Wird der Wasser-Heater danach wieder „Ein" geschaltet, **läuft die automatische Steuerung von selbst wieder an**, sofern „Auto control" weiterhin aktiviert ist – ein erneutes Betätigen des Schalters ist nicht nötig.
+- Ein von der automatischen Steuerung berechneter Wert von `0 W` schaltet den Wasser-Heater **nicht** aus – „kein Überschuss gerade" ist ein normaler, vorübergehender Zustand, in dem die automatische Steuerung weiterläuft und auf zurückkehrenden Überschuss wartet.
+- Eigene Automationen, die bisher die Leistung berechnet und gesetzt haben, sollten deaktiviert werden, sobald „Auto control" verwendet wird, um Doppelsteuerung zu vermeiden.
+
+Register `1000` ist laut offizieller Dokumentation explizit von der Einschränkung „max. 1× täglich schreiben" ausgenommen, das beschriebene Heartbeat- bzw. einmalige Schreiben ist also unbedenklich.
 
 ### Register 1081 – Device state
 
-Das offizielle my-PV-Dokument listet Register `1081` als `R/W`, Wertebereich `0, 1`, ohne weitere Beschreibung. Aus dem im selben Dokument definierten Status-Code `21` „Device disabled (devmode = 0)" lässt sich ableiten, dass Register 1081 den `devmode`-Schalter des Geräts spiegelt: **`0` = Gerät deaktiviert, `1` = Gerät aktiviert.** Diese Integration bildet das als **rein lesenden**, diagnostischen Binary Sensor „Device enabled" ab.
+Das offizielle my-PV-Dokument listet Register `1081` als `R/W`, Wertebereich `0, 1`, ohne weitere Beschreibung. Aus dem im selben Dokument definierten Status-Code `21` „Device disabled (devmode = 0)" lässt sich ableiten, dass Register 1081 den `devmode`-Schalter des Geräts spiegelt: **`0` = Gerät deaktiviert, `1` = Gerät aktiviert.**
 
-Bewusst **kein Schreibzugriff**: Register 1081 gehört *nicht* zu den explizit für häufiges Schreiben freigegebenen Registern (siehe nächster Abschnitt) – ein automatisiertes/wiederholtes Umschalten würde gegen die Herstellervorgabe verstoßen und den Flash-Speicher des Geräts unnötig verschleißen.
+Diese Integration bildet das als **Switch-Entity „Device enabled"** ab, mit der sich das Gerät selbst ein- und ausschalten lässt – das ist ein anderes Konzept als das Ein/Aus der Water-Heater-Entity: Diese fordert nur einen Leistungswert über Register `1000` an, während das Gerät selbst aktiviert bleibt; der Switch hier deaktiviert das Gerät vollständig, so wie es auch über das Webinterface des Geräts möglich wäre.
+
+**Wichtig zur Schreibhäufigkeit:** Register `1081` gehört *nicht* zu den explizit für häufiges Schreiben freigegebenen Registern (siehe nächster Abschnitt) – anders als das Power-Register wird es deshalb **nie automatisch** bei jedem Abfragezyklus neu geschrieben, sondern ausschließlich beim expliziten Umschalten des Switches. Verwende diesen Switch nur für gelegentliche, manuelle Schaltvorgänge – binde ihn **nicht** in Automatisierungen ein, die ihn häufig (mehrfach täglich) umschalten würden, um den Flash-Speicher des Geräts nicht unnötig zu verschleißen.
 
 ### Firmware-Version, Hardware-Version, MAC-Adresse
 
@@ -116,12 +163,29 @@ Die **Firmware-Version** lässt sich über Modbus auslesen und wird deshalb sowo
 Laut offizieller my-PV-Dokumentation dürfen **alle schreibbaren Register höchstens einmal pro Tag beschrieben werden**, um den nichtflüchtigen Speicher des Geräts nicht vorzeitig zu verschleißen – **mit Ausnahme** der Register `1000` (Power), `1009`–`1012` (Uhrzeit/Boost activate) und `1078`–`1080`. Das betrifft insbesondere:
 
 - Register `1002` (Zieltemperatur, `Number`- und `Water Heater`-Entity dieser Integration): Vermeide Automatisierungen, die diesen Wert mehrfach täglich ändern.
-- Register `1014` (max. Leistung) und `1081` (Device state) werden von dieser Integration deshalb bewusst nur **gelesen**, nicht geschrieben.
+- Register `1081` (Device state, `Switch`-Entity „Device enabled"): wird nur beim expliziten Umschalten geschrieben, nie automatisch bei jedem Abfragezyklus – trotzdem nicht für häufig laufende Automatisierungen verwenden.
+- Register `1014` (max. Leistung) wird von dieser Integration deshalb bewusst nur **gelesen**, nicht geschrieben.
 
 ## Bekannte Einschränkungen
 
 - Getestet wurde primär gegen den AC ELWA 2 mit aktueller Firmware. Rückmeldungen zu abweichenden Firmware-Ständen sind willkommen.
 - Register 1081 ist offiziell nur mit Wertebereich, aber ohne textuelle Bedeutung dokumentiert; die Zuordnung 0=deaktiviert/1=aktiviert ist eine plausible, aber nicht von my-PV wörtlich bestätigte Ableitung (siehe oben).
+
+## Warum nicht das neue HA-Modbus-Backend (2026.9)?
+
+Home Assistant 2026.9 hat ein neues, Config-Flow-basiertes Modbus-Backend eingeführt (Bibliothek [`modbus-connection`](https://home-assistant-libs.github.io/modbus-connection/), intern jetzt [`tmodbus`](https://github.com/wlcrs/tmodbus) statt `pymodbus`) – siehe den [Release-Blogpost](https://www.home-assistant.io/blog/2026/09/02/release-20269/#modernizing-modbus) und den [Entwickler-Blogpost „Modernizing Modbus"](https://developers.home-assistant.io/blog/2026/07/05/modernizing-modbus). Es löst zwei Probleme:
+
+1. Nutzer richten Geräte per UI-Config-Flow ein, statt Registerkarten händisch in YAML zu pflegen.
+2. Mehrere Integrationen, die sich einen **physischen Bus** teilen (z. B. ein RS-485-Bus oder ein TCP-Gateway mit mehreren Geräten unterschiedlicher Hersteller), bekommen dafür eine gemeinsam genutzte Verbindung ("Unit"), statt sich gegenseitig zu blockieren.
+
+Für diese Integration bringt das aktuell keinen Mehrwert:
+
+- **Punkt 1 haben wir bereits** – diese Integration nutzt von Anfang an einen Config-Flow, keine YAML-Registerkarten.
+- **Punkt 2 trifft praktisch nicht zu** – die AC ELWA 2 hat eine eigene IP-Adresse und einen eigenen Modbus-TCP-Server. Es gibt keinen anderen Consumer, mit dem sich eine Verbindung teilen ließe.
+- Das neue Backend ist zum jetzigen Zeitpunkt erst wenige Tage alt; `modbus-connection` und das vorgeschlagene Vorlagen-Muster (eigenständige Device-Library + vendorisierte HACS-Integration) sind ein "Let's get building"-Aufruf, kein etabliertes Muster.
+- Eine Portierung würde die Mindest-HA-Version deutlich anheben (aktuell `2024.11.0`) und eine Aufteilung in eine eigenständige Device-Library + Integration erfordern – unverhältnismäßig für eine kleine inoffizielle Integration ohne den eigentlichen Nutzen (geteilte Verbindungen).
+
+Diese Integration bleibt daher vorerst bei `pymodbus`. Sollte sich das neue Ökosystem etablieren oder sich die Anforderungen ändern (z. B. Wunsch nach Aufnahme in HA Core), kann diese Entscheidung revidiert werden.
 
 ## Quellen & Danksagung
 

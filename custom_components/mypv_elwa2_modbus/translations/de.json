@@ -36,7 +36,13 @@
         "title": "MyPV ELWA 2 Optionen",
         "data": {
           "scan_interval": "Abfrageintervall (Sekunden)",
-          "max_power": "Maximale Leistung (W), wird verwendet, falls das Gerät kein Limit meldet"
+          "max_power": "Maximale Leistung (W), wird verwendet, falls das Gerät kein Limit meldet",
+          "grid_power_entity_id": "Netzeinspeisung-Entity (optional, aktiviert automatische Steuerung)",
+          "invert_grid_power_sign": "Vorzeichen der Netzeinspeisung-Entity umkehren"
+        },
+        "data_description": {
+          "grid_power_entity_id": "Ein Sensor, der die Netzeinspeisung in Watt liefert. Standardmäßig: positiv = Überschuss/Einspeisung, negativ = Bezug.",
+          "invert_grid_power_sign": "Aktivieren, falls dein Sensor die umgekehrte Konvention nutzt (positiv = Bezug, negativ = Überschuss)."
         }
       }
     }
@@ -96,12 +102,19 @@
     "binary_sensor": {
       "heating_active": { "name": "Heizt aktiv" },
       "aux_relay_active": { "name": "AUX-Relais aktiv" },
-      "selv_relay_active": { "name": "SELV-Relais aktiv" },
-      "device_enabled": { "name": "Gerät aktiviert" }
+      "selv_relay_active": { "name": "SELV-Relais aktiv" }
     },
     "number": {
       "power": { "name": "Leistung" },
-      "target_temperature": { "name": "Zieltemperatur" }
+      "target_temperature": { "name": "Zieltemperatur" },
+      "auto_reserve": { "name": "Auto-Steuerung Reserve" },
+      "auto_max_power": { "name": "Auto-Steuerung max. Leistung" },
+      "auto_rate_limit": { "name": "Auto-Steuerung Rate-Limit" },
+      "auto_smoothing": { "name": "Auto-Steuerung Glättung" }
+    },
+    "switch": {
+      "device_enabled": { "name": "Gerät aktiviert" },
+      "auto_control": { "name": "Automatische Steuerung" }
     }
   }
 }

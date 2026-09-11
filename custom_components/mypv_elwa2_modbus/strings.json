@@ -36,7 +36,13 @@
         "title": "MyPV ELWA 2 options",
         "data": {
           "scan_interval": "Poll interval (seconds)",
-          "max_power": "Maximum power (W), used as a fallback if the device does not report a limit"
+          "max_power": "Maximum power (W), used as a fallback if the device does not report a limit",
+          "grid_power_entity_id": "Grid power entity (optional, enables automatic control)",
+          "invert_grid_power_sign": "Invert sign of the grid power entity"
+        },
+        "data_description": {
+          "grid_power_entity_id": "A sensor reporting grid feed-in in Watt. By default, positive = surplus/feed-in, negative = grid consumption.",
+          "invert_grid_power_sign": "Enable if your sensor uses the opposite convention (positive = consumption, negative = surplus)."
         }
       }
     }
@@ -96,12 +102,19 @@
     "binary_sensor": {
       "heating_active": { "name": "Heating active" },
       "aux_relay_active": { "name": "AUX relay active" },
-      "selv_relay_active": { "name": "SELV relay active" },
-      "device_enabled": { "name": "Device enabled" }
+      "selv_relay_active": { "name": "SELV relay active" }
     },
     "number": {
       "power": { "name": "Power" },
-      "target_temperature": { "name": "Target temperature" }
+      "target_temperature": { "name": "Target temperature" },
+      "auto_reserve": { "name": "Auto control reserve" },
+      "auto_max_power": { "name": "Auto control max. power" },
+      "auto_rate_limit": { "name": "Auto control rate limit" },
+      "auto_smoothing": { "name": "Auto control smoothing" }
+    },
+    "switch": {
+      "device_enabled": { "name": "Device enabled" },
+      "auto_control": { "name": "Auto control" }
     }
   }
 }

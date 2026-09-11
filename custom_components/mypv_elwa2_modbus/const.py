@@ -13,14 +13,32 @@ MODEL: Final = "AC ELWA 2"
 CONF_UNIT_ID: Final = "unit_id"
 CONF_SCAN_INTERVAL: Final = "scan_interval"
 CONF_MAX_POWER: Final = "max_power"
+CONF_GRID_POWER_ENTITY_ID: Final = "grid_power_entity_id"
+CONF_INVERT_GRID_POWER_SIGN: Final = "invert_grid_power_sign"
 
 DEFAULT_PORT: Final = 502
 DEFAULT_UNIT_ID: Final = 1
 DEFAULT_SCAN_INTERVAL: Final = 5  # seconds
 DEFAULT_MAX_POWER: Final = 3000  # W, fallback if the device does not report a limit
+DEFAULT_INVERT_GRID_POWER_SIGN: Final = False
 
 MIN_SCAN_INTERVAL: Final = 2
 MAX_SCAN_INTERVAL: Final = 300
+
+# Automatic grid-surplus power control (see coordinator._async_apply_auto_control).
+# Defaults for the runtime-adjustable Number entities backing it.
+DEFAULT_AUTO_RESERVE_WATTS: Final = 100  # W of surplus always left unused
+DEFAULT_AUTO_RATE_LIMIT_SECONDS: Final = 1  # minimum time between two auto-control writes
+MIN_AUTO_RATE_LIMIT_SECONDS: Final = 1
+MAX_AUTO_RATE_LIMIT_SECONDS: Final = 3600
+MAX_AUTO_RESERVE_WATTS: Final = 10000
+FALLBACK_AUTO_MAX_POWER_WATTS: Final = 10000  # ceiling if the device reports no limit
+
+# Moving-average smoothing window (s) applied to the grid power entity
+# before it enters the auto-control calculation. 0 disables smoothing.
+DEFAULT_AUTO_SMOOTHING_SECONDS: Final = 5
+MIN_AUTO_SMOOTHING_SECONDS: Final = 0
+MAX_AUTO_SMOOTHING_SECONDS: Final = 300
 
 # Persistent storage (.storage/<key>_<entry_id>) for the last manually set,
 # non-zero power value, so it survives Home Assistant restarts.
@@ -80,8 +98,11 @@ REG_SERIAL_NUMBER_COUNT: Final = 8
 # IMPORTANT: per the official documentation, all writable registers must NOT
 # be written more than once a day to protect the device's non-volatile
 # memory, EXCEPT for registers 1000, 1009, 1010, 1011, 1012 and 1078-1080.
-# REG_DEVICE_STATE (1081) is *not* in that exception list, which is why this
-# integration only ever reads it and never exposes a way to write it.
+# REG_DEVICE_STATE (1081) is *not* in that exception list. It is exposed as a
+# Switch entity for occasional, explicit manual control (see
+# coordinator.async_set_device_enabled), but - unlike REG_POWER - is
+# intentionally never re-asserted automatically on a poll cycle, so normal
+# use stays well within "at most once a day".
 REG_ADDRESSES_SAFE_FOR_FREQUENT_WRITES: Final = frozenset({1000, 1009, 1010, 1011, 1012, 1078, 1079, 1080})
 
 # REG_STATUS (1003) values, verbatim from the official documentation.
@@ -104,6 +125,23 @@ STATUS_CODES: Final[dict[int, str]] = {
 
 # Status codes under which the AC ELWA 2 is actively heating.
 HEATING_STATUS_CODES: Final = frozenset({2, 4})
+
+# Status codes under which the AC ELWA 2 has lost control / is disabled -
+# these force the WaterHeater's latched on/off state (see coordinator.py) to
+# off, even if it was previously considered on.
+NO_CONTROL_STATUS_CODES: Final = frozenset({1, 21})  # no_control, device_disabled
+
+# Number of consecutive polls that must observe the *opposite* condition
+# before the latch actually flips - applied symmetrically to both
+# directions: NO_CONTROL_STATUS_CODES before flipping to off, and
+# HEATING_STATUS_CODES before flipping to on. Needed because the device does
+# not update its Status register instantly after a Power write: the poll
+# triggered right after an explicit "on" typically still reads the previous
+# ("no_control") status, and the poll right after an explicit "off"
+# typically still reads the previous ("heat"/"boost_heat") status. Without
+# this debounce, the very refresh triggered by either action would
+# immediately undo it. See coordinator._async_update_latch.
+LATCH_DEBOUNCE_POLLS: Final = 2
 
 # REG_OPERATION_STATE (1077) values, mapped from the official documentation's
 # "operation states (screen icon)" footnote:
