@@ -63,7 +63,14 @@ class MyPVElwa2PowerNumber(MyPVElwa2Entity, NumberEntity):
     (`coordinator.power_setpoint`), not necessarily the device's live power
     reading - this avoids UI flicker from momentary mismatches between what
     was just written and what the next poll reads back. See
-    `coordinator.async_set_power`.
+    `coordinator.async_set_manual_power`.
+
+    Setting this to 0 W does *not* turn the water heater off - the
+    relationship between the two is one-directional: turning the water
+    heater off does bring this down to 0 W (since it then shows 0 while
+    `is_on` is False), but setting 0 W here only reduces the output, it
+    does not flip the water heater to "off". Setting a value > 0 does turn
+    the water heater on if it wasn't already.
 
     While automatic grid-surplus control is enabled (see the "Auto control"
     switch), manual changes here are ignored - the automatic controller
@@ -103,14 +110,14 @@ class MyPVElwa2PowerNumber(MyPVElwa2Entity, NumberEntity):
         return None
 
     async def async_set_native_value(self, value: float) -> None:
-        """Write a new power set-point to the device, unless auto control is active."""
+        """Write a new power level to the device, unless auto control is active."""
         if self.coordinator.auto_control_enabled:
             _LOGGER.debug(
                 "Power number: ignoring manual set to %s W, automatic control is active",
                 value,
             )
             return
-        await self.coordinator.async_set_power(int(value))
+        await self.coordinator.async_set_manual_power(int(value))
 
 
 class MyPVElwa2TargetTemperatureNumber(MyPVElwa2Entity, NumberEntity):

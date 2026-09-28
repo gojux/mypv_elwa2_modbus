@@ -292,7 +292,17 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
                 raise UpdateFailed(f"Error communicating with device: {err}") from err
 
     async def async_set_power(self, watts: int) -> None:
-        """Write a manual power set-point (on) or turn the device off.
+        """Turn the water heater on (watts > 0) or off (watts == 0).
+
+        This is the *only* way (besides autonomous Status detection, see
+        `_async_update_latch`) that `is_on` changes - it is used exclusively
+        by the water heater entity's on/off, *not* by the Power number
+        entity anymore (see `async_set_manual_power`): the relationship
+        between the two is one-directional. Turning the water heater off
+        always brings the Power number down to 0 (via `is_on` becoming
+        False, see its `native_value`), but setting the Power number to 0
+        must NOT turn the water heater off - only `async_set_manual_power`
+        handles that side.
 
         `watts > 0` is treated as "on": the value is written once, then kept
         alive by being re-asserted every poll cycle, and remembered as
@@ -305,11 +315,6 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
         automatic PV-excess control the device performs on its own.
         `last_power_setpoint` is intentionally left untouched so the target
         power is remembered for the next "on".
-
-        This is for *explicit* on/off requests only (Power number, water
-        heater). Automatic grid-surplus control uses `_async_write_auto_power`
-        instead, since a calculated 0 W is a normal, transient output level
-        that must not turn the water heater off.
 
         Note that turning the water heater off does *not* disable the "Auto
         control" switch itself - it only pauses the underlying function
@@ -334,6 +339,34 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
         # undo it on the next poll(s).
         self._no_control_streak = 0
         self._heating_streak = 0
+        await self._async_persist_state()
+        await self.async_request_refresh()
+
+    async def async_set_manual_power(self, watts: int) -> None:
+        """Write a power level from the Power number entity.
+
+        Unlike `async_set_power` (water heater on/off), setting this to
+        0 W does *not* turn the water heater off - it only reduces the
+        output to 0 W while `is_on` stays whatever it already was, exactly
+        like automatic control's 0 W handling (see `_async_write_auto_power`).
+        If the water heater is already off, a request for 0 W is a no-op
+        (there is nothing to reduce, and register 1000 is already 0).
+
+        Setting a value > 0 *does* turn the water heater on if it wasn't
+        already - the one-directional relationship only concerns the "0 W /
+        off" case, not the "on" case.
+        """
+        watts = max(0, int(watts))
+        if watts == 0 and not self.is_on:
+            return
+        await self._async_write_power_register(watts)
+        self.power_setpoint = watts
+        if watts > 0:
+            self.last_power_setpoint = watts
+            if not self.is_on:
+                self.is_on = True
+                self._no_control_streak = 0
+                self._heating_streak = 0
         await self._async_persist_state()
         await self.async_request_refresh()
 
