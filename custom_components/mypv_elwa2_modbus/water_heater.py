@@ -10,12 +10,12 @@ from homeassistant.components.water_heater import (
     WaterHeaterEntity,
     WaterHeaterEntityFeature,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import ATTR_TEMPERATURE, STATE_OFF, UnitOfTemperature
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import CONF_MAX_POWER, DEFAULT_MAX_POWER, DOMAIN
+from .const import CONF_MAX_POWER, DEFAULT_MAX_POWER
+from . import MyPVElwa2ConfigEntry
 from .coordinator import MyPVElwa2ModbusCoordinator
 from .entity import MyPVElwa2Entity
 
@@ -24,11 +24,11 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: MyPVElwa2ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up the MyPV ELWA 2 water heater entity."""
-    coordinator: MyPVElwa2ModbusCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     max_power = entry.options.get(CONF_MAX_POWER, DEFAULT_MAX_POWER)
     async_add_entities([MyPVElwa2WaterHeater(coordinator, max_power)])
 
@@ -74,7 +74,6 @@ class MyPVElwa2WaterHeater(MyPVElwa2Entity, WaterHeaterEntity):
     """
 
     _attr_name = None
-    _attr_operation_list = [STATE_OFF, STATE_ELECTRIC]
     _attr_supported_features = (
         WaterHeaterEntityFeature.ON_OFF
         | WaterHeaterEntityFeature.TARGET_TEMPERATURE
@@ -88,6 +87,7 @@ class MyPVElwa2WaterHeater(MyPVElwa2Entity, WaterHeaterEntity):
     def __init__(self, coordinator: MyPVElwa2ModbusCoordinator, max_power: int) -> None:
         """Initialize the water heater entity."""
         super().__init__(coordinator, "water_heater")
+        self._attr_operation_list = [STATE_OFF, STATE_ELECTRIC]
         self._fallback_max_power = max_power
 
     @property

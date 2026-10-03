@@ -14,7 +14,6 @@ from homeassistant.components.sensor import (
     SensorEntityDescription,
     SensorStateClass,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import (
     EntityCategory,
     UnitOfElectricPotential,
@@ -26,7 +25,8 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
-from .const import DEVICE_OPERATION_MODES, DOMAIN, OPERATION_STATES, STATUS_CODES
+from .const import DEVICE_OPERATION_MODES, OPERATION_STATES, STATUS_CODES
+from . import MyPVElwa2ConfigEntry
 from .coordinator import MyPVElwa2Data, MyPVElwa2ModbusCoordinator
 from .entity import MyPVElwa2Entity
 
@@ -153,11 +153,11 @@ SENSOR_DESCRIPTIONS: tuple[MyPVElwa2SensorEntityDescription, ...] = (
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: MyPVElwa2ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up MyPV ELWA 2 Modbus sensors."""
-    coordinator: MyPVElwa2ModbusCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
 
     entities: list[SensorEntity] = [
         MyPVElwa2Sensor(coordinator, description) for description in SENSOR_DESCRIPTIONS
@@ -224,13 +224,23 @@ class MyPVElwa2EnergySensor(MyPVElwa2Entity, RestoreSensor, SensorEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Integrate the latest power reading into the running total."""
+        """Integrate the latest power reading into the running total.
+
+        Only intervals between two successful, closely spaced updates are
+        integrated. After a failed update or a gap longer than two update
+        intervals, the reference point is reset, so the last known power is
+        never extrapolated over time the device was not reachable.
+        """
         data = self.coordinator.data
         now = dt_util.utcnow()
-        if data is not None:
+        if data is None or not self.coordinator.last_update_success:
+            self._last_update = None
+        else:
             if self._last_update is not None:
-                elapsed_hours = (now - self._last_update).total_seconds() / 3600
-                self._total_kwh += (data.power * elapsed_hours) / 1000
+                elapsed = (now - self._last_update).total_seconds()
+                max_gap = 2 * self.coordinator.update_interval.total_seconds()
+                if elapsed <= max_gap:
+                    self._total_kwh += (data.power * elapsed / 3600) / 1000
             self._last_update = now
         super()._handle_coordinator_update()
 

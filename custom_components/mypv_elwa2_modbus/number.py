@@ -9,7 +9,6 @@ from homeassistant.components.number import (
     NumberEntity,
     NumberMode,
 )
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import EntityCategory, UnitOfPower, UnitOfTemperature, UnitOfTime
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
@@ -17,7 +16,6 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from .const import (
     CONF_MAX_POWER,
     DEFAULT_MAX_POWER,
-    DOMAIN,
     FALLBACK_AUTO_MAX_POWER_WATTS,
     MAX_AUTO_RATE_LIMIT_SECONDS,
     MAX_AUTO_RESERVE_WATTS,
@@ -25,6 +23,7 @@ from .const import (
     MIN_AUTO_RATE_LIMIT_SECONDS,
     MIN_AUTO_SMOOTHING_SECONDS,
 )
+from . import MyPVElwa2ConfigEntry
 from .coordinator import MyPVElwa2ModbusCoordinator
 from .entity import MyPVElwa2Entity
 
@@ -33,11 +32,11 @@ _LOGGER = logging.getLogger(__name__)
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: MyPVElwa2ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up MyPV ELWA 2 Modbus number entities."""
-    coordinator: MyPVElwa2ModbusCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     max_power = entry.options.get(CONF_MAX_POWER, DEFAULT_MAX_POWER)
 
     async_add_entities(

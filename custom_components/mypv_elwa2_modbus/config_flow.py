@@ -59,14 +59,9 @@ async def _async_get_device_serial(host: str, port: int, unit_id: int) -> str:
         await client.connect()
         if not client.connected:
             raise CannotConnect(f"Could not open a Modbus TCP connection to {host}:{port}")
-        try:
-            result = await client.read_holding_registers(
-                REG_SERIAL_NUMBER_BASE, count=REG_SERIAL_NUMBER_COUNT, slave=unit_id
-            )
-        except TypeError:
-            result = await client.read_holding_registers(
-                REG_SERIAL_NUMBER_BASE, count=REG_SERIAL_NUMBER_COUNT, device_id=unit_id
-            )
+        result = await client.read_holding_registers(
+            REG_SERIAL_NUMBER_BASE, count=REG_SERIAL_NUMBER_COUNT, device_id=unit_id
+        )
         if result.isError():
             raise CannotConnect(
                 f"Modbus error reading register {REG_SERIAL_NUMBER_BASE}: {result}"
@@ -103,7 +98,7 @@ class MyPVElwa2ModbusConfigFlow(ConfigFlow, domain=DOMAIN):
                 serial = await _async_get_device_serial(host, port, unit_id)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.exception("Unexpected exception during config flow validation")
                 errors["base"] = "unknown"
             else:
@@ -133,7 +128,7 @@ class MyPVElwa2ModbusConfigFlow(ConfigFlow, domain=DOMAIN):
                 serial = await _async_get_device_serial(host, port, unit_id)
             except CannotConnect:
                 errors["base"] = "cannot_connect"
-            except Exception:  # noqa: BLE001
+            except Exception:
                 _LOGGER.exception("Unexpected exception during reconfigure validation")
                 errors["base"] = "unknown"
             else:

@@ -5,22 +5,21 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.switch import SwitchDeviceClass, SwitchEntity
-from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import DOMAIN
+from . import MyPVElwa2ConfigEntry
 from .coordinator import MyPVElwa2ModbusCoordinator
 from .entity import MyPVElwa2Entity
 
 
 async def async_setup_entry(
     hass: HomeAssistant,
-    entry: ConfigEntry,
+    entry: MyPVElwa2ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Set up MyPV ELWA 2 Modbus switch entities."""
-    coordinator: MyPVElwa2ModbusCoordinator = hass.data[DOMAIN][entry.entry_id]
+    coordinator = entry.runtime_data
     async_add_entities(
         [MyPVElwa2DeviceEnabledSwitch(coordinator), MyPVElwa2AutoControlSwitch(coordinator)]
     )

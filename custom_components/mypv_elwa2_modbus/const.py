@@ -67,7 +67,6 @@ REG_POWER: Final = 1000  # Power (W), read/write. Safe to write frequently.
 REG_TEMP_T1: Final = 1001  # Temp 1, internal sensor, raw value = °C * 10
 REG_TARGET_TEMPERATURE: Final = 1002  # Tmax, target temp (solar), raw = °C * 10
 REG_STATUS: Final = 1003  # Status, see STATUS_CODES
-REG_POWER_TIMEOUT: Final = 1004  # Power timeout (s), write-only watchdog for REG_POWER
 REG_MAX_CONTROLLED_POWER: Final = 1014  # max Power, configured limit (W), 500-3500
 REG_CONTROLLER_FW_MAIN_VERSION: Final = 1016  # Controller firmware main version
 REG_POWERSTAGE_FW_VERSION: Final = 1017  # Powerstage firmware version, format "ep%03d"
@@ -78,7 +77,7 @@ REG_VOLTAGE: Final = 1061  # U L1 (V), power stage input voltage
 REG_OPERATION_MODE: Final = 1065  # Operation mode: 1 or 3, see DEVICE_OPERATION_MODES
 REG_MAX_AVAILABLE_POWER: Final = 1071  # Pmax_abs, max. power currently possible (W)
 REG_OPERATION_STATE: Final = 1077  # operation state, see OPERATION_STATES
-REG_DEVICE_STATE: Final = 1081  # Device state: 0/1, see DEVICE_STATES
+REG_DEVICE_STATE: Final = 1081  # Device state: 0 = disabled, 1 = enabled (inferred, see README)
 REG_CO_CONTROLLER_FW_VERSION: Final = 1086  # Co-Controller firmware version, format "ec%03d"
 
 # NOTE: the official documentation does not define a hardware/board revision
@@ -103,7 +102,6 @@ REG_SERIAL_NUMBER_COUNT: Final = 8
 # coordinator.async_set_device_enabled), but - unlike REG_POWER - is
 # intentionally never re-asserted automatically on a poll cycle, so normal
 # use stays well within "at most once a day".
-REG_ADDRESSES_SAFE_FOR_FREQUENT_WRITES: Final = frozenset({1000, 1009, 1010, 1011, 1012, 1078, 1079, 1080})
 
 # REG_STATUS (1003) values, verbatim from the official documentation.
 STATUS_CODES: Final[dict[int, str]] = {
@@ -170,11 +168,3 @@ DEVICE_OPERATION_MODES: Final[dict[int, str]] = {
     3: "mode_3",
 }
 
-# REG_DEVICE_STATE (1081) values. The official documentation only lists the
-# raw value range (0, 1) without further explanation. This mapping is
-# inferred from status code 21 "Device disabled (devmode = 0)" in the same
-# document, which strongly implies 1081 mirrors the device's "devmode" flag.
-DEVICE_STATES: Final[dict[int, str]] = {
-    0: "disabled",
-    1: "enabled",
-}

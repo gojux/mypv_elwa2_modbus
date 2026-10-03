@@ -87,6 +87,7 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
     def __init__(
         self,
         hass: HomeAssistant,
+        *,
         entry: ConfigEntry,
         host: str,
         port: int,
@@ -99,6 +100,7 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
         super().__init__(
             hass,
             _LOGGER,
+            config_entry=entry,
             name=entry.title,
             update_interval=timedelta(seconds=scan_interval),
         )
@@ -245,40 +247,30 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
         self._client.close()
 
     async def _read_holding_registers(self, address: int, count: int) -> list[int]:
-        try:
-            result = await self._client.read_holding_registers(
-                address, count=count, slave=self.unit_id
-            )
-        except TypeError:
-            result = await self._client.read_holding_registers(
-                address, count=count, device_id=self.unit_id
-            )
+        result = await self._client.read_holding_registers(
+            address, count=count, device_id=self.unit_id
+        )
         if result.isError():
             raise UpdateFailed(f"Modbus error reading register {address}: {result}")
         _LOGGER.debug(
             "Read from %s:%s: %s",
             self.host,
             self.port,
-            dict(zip(range(address, address + count), result.registers)),
+            dict(zip(range(address, address + count), result.registers, strict=False)),
         )
         return result.registers
 
     async def _write_registers(self, address: int, values: list[int]) -> None:
-        try:
-            result = await self._client.write_registers(
-                address, values, slave=self.unit_id
-            )
-        except TypeError:
-            result = await self._client.write_registers(
-                address, values, device_id=self.unit_id
-            )
+        result = await self._client.write_registers(
+            address, values, device_id=self.unit_id
+        )
         if result.isError():
             raise UpdateFailed(f"Modbus error writing register {address}: {result}")
         _LOGGER.debug(
             "Wrote to %s:%s: %s",
             self.host,
             self.port,
-            dict(zip(range(address, address + len(values)), values)),
+            dict(zip(range(address, address + len(values)), values, strict=False)),
         )
 
     async def _async_write_power_register(self, watts: int) -> None:
@@ -397,7 +389,7 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
         more than once a day to protect the device's non-volatile memory, so
         avoid wiring this into automations that change it frequently.
         """
-        raw = max(0, int(round(celsius * 10)))
+        raw = max(0, round(celsius * 10))
         async with self._lock:
             await self._async_ensure_connected()
             try:
@@ -537,7 +529,7 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
             max_power = min(max_power, self.data.max_controlled_power)
 
         new_power = base + grid_power - self.auto_reserve_watts
-        new_power = max(0, min(int(round(new_power)), max_power))
+        new_power = max(0, min(round(new_power), max_power))
 
         self._auto_control_last_write = now
         _LOGGER.debug(
