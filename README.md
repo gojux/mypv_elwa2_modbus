@@ -1,5 +1,9 @@
 # MyPV ELWA 2 Modbus (unofficial)
 
+🇩🇪 Deutsch · [🇬🇧 English](README.en.md)
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=gojux&repository=mypv_elwa2_modbus&category=integration)
+
 Eine **inoffizielle** Home Assistant Integration für den [my-PV AC ELWA 2](https://www.my-pv.com/), die direkt per **Modbus TCP** mit dem Gerät kommuniziert – ganz ohne Umweg über die Web-API des Geräts.
 
 > ⚠️ Diese Integration steht in keiner Verbindung zu my-PV GmbH und wird nicht von my-PV unterstützt oder gepflegt. Nutzung auf eigenes Risiko, insbesondere beim Schreiben von Registern (siehe [Hinweis zur Schreibhäufigkeit](#wichtiger-hinweis-schreibhäufigkeit-von-registern)).
@@ -8,7 +12,7 @@ Eine **inoffizielle** Home Assistant Integration für den [my-PV AC ELWA 2](http
 
 Es gibt bereits eine [offizielle Home Assistant Integration von my-PV](https://github.com/my-PV/home-assistant-integration). Diese Integration wurde trotzdem entwickelt, weil:
 
-- **Modbus ist deutlich schneller als HTTP/JSON.** Die offizielle Integration spricht die Web-API des Geräts an und pollt alle 5 Sekunden per HTTP/JSON. Diese Integration liest alle relevanten Register in **einem einzigen Modbus-Request** (Register 1000–1081) und kann dadurch spürbar häufiger und mit geringerer Latenz und weniger Overhead aktualisieren.
+- **Modbus ist deutlich schneller als HTTP/JSON.** Die offizielle Integration spricht die Web-API des Geräts an und pollt alle 5 Sekunden per HTTP/JSON. Diese Integration liest alle relevanten Register in **einem einzigen Modbus-Request** (Register 1000–1086) und kann dadurch spürbar häufiger und mit geringerer Latenz und weniger Overhead aktualisieren.
 - **Der offiziellen App/Integration fehlen Funktionen, die hier ergänzt werden:**
   - Ein **Energy-Sensor** (kWh), der aus der Leistungsmessung lokal aufintegriert wird und Neustarts übersteht – die offizielle Integration bietet nur eine Momentanleistung, aber keine Energiezählung, die z. B. im Home Assistant Energie-Dashboard genutzt werden kann.
   - Eine **beschreibbare Power-Entity (Number)**, mit der sich die Ausgangsleistung direkt in Watt vorgeben lässt – die offizielle App/Integration erlaubt nur das Setzen einer Zieltemperatur, nicht das direkte Schreiben der Leistung. Das ist z. B. für die direkte Ansteuerung durch ein Energiemanagementsystem nützlich.
@@ -19,7 +23,7 @@ Getestet und entwickelt für den **my-PV AC ELWA 2**. Andere my-PV-Geräte (AC T
 
 ## Voraussetzungen
 
-- Home Assistant **2024.11** oder neuer (wird für den „Neu konfigurieren"-Dialog benötigt).
+- Home Assistant **2026.5** oder neuer.
 - AC ELWA 2 im gleichen Netzwerk wie Home Assistant.
 - **Modbus TCP muss am Gerät aktiviert sein:** Im Webinterface des Geräts unter *Einstellungen → Schnittstellen → Modbus* aktivieren. Standardport ist `502`, Standard-Unit-ID ist `1`.
 
@@ -27,7 +31,7 @@ Getestet und entwickelt für den **my-PV AC ELWA 2**. Andere my-PV-Geräte (AC T
 
 ### Über HACS (empfohlen)
 
-1. HACS öffnen → *Custom repositories* → dieses Repository als Typ *Integration* hinzufügen.
+1. Den HACS-Button oben anklicken (alternativ in HACS → *Custom repositories* dieses Repository als Typ *Integration* hinzufügen).
 2. „MyPV ELWA 2 Modbus (unofficial)" installieren.
 3. Home Assistant neu starten.
 
@@ -42,7 +46,7 @@ Getestet und entwickelt für den **my-PV AC ELWA 2**. Andere my-PV-Geräte (AC T
 2. „MyPV ELWA 2 Modbus (unofficial)" auswählen.
 3. Host/IP-Adresse, Port (Standard `502`) und Modbus-Unit-ID (Standard `1`) eingeben.
 
-Über die Optionen der Integration lassen sich zusätzlich das **Abfrageintervall** (Standard 5 s), eine **Fallback-Maximalleistung** für die Power-Number-Entity sowie – optional – eine **Netzeinspeisung-Entity** für die [automatische Steuerung](#automatische-netzeinspeisung-steuerung) einstellen.
+Über die Optionen der Integration lassen sich zusätzlich das **Abfrageintervall** (Standard 5 s), eine **Fallback-Maximalleistung** für die Power-Number-Entity sowie – optional – eine **Netzeinspeisung-Entity** für die [automatische Steuerung](#automatische-netzeinspeisung-steuerung) einstellen. Liefert deine Netzeinspeisung-Entity die umgekehrte Vorzeichenkonvention, aktivierst du dort außerdem **„Vorzeichen der Netzeinspeisung-Entity umkehren“**.
 
 ### IP-Adresse/Port später ändern (Reconfigure)
 
@@ -99,7 +103,7 @@ Leistungs-Sollwert und Ein/Aus-Status würden bei einer rein Live-Register-basie
 
 **Kein Dauerschreiben mehr im Aus-Zustand:** Solange „Ein", schreibt die Integration den Leistungs-Sollwert wie bisher bei jedem Abfragezyklus erneut in Register `1000` (Heartbeat, s.u.) – das gilt auch, wenn der Sollwert dabei `0 W` ist. Solange „Aus", wird beim Übergang genau **einmal** `0` geschrieben und danach – bis zur nächsten expliziten Aktion – **nicht** mehr weiter auf Register `1000` geschrieben, damit Home Assistant eine eventuelle automatische PV-Überschuss-Regelung des Geräts nicht fortlaufend überschreibt.
 
-Ein- und Ausschalten erfolgt dabei weiterhin über dasselbe **Power-Register (`1000`)**, das auch die Power-Number-Entity nutzt (Ein: zuletzt gesetzter Leistungswert bzw. Fallback auf die Maximalleistung; Aus: `0`) – analog zur `Enable()`-Implementierung in [evcc](https://github.com/evcc-io/evcc/blob/master/charger/mypv.go). Bewusst **nicht** verwendet wird das Gerät-eigene Register `1012` („Boost activate", physischer Boost-Backup-Knopf bzw. `/control.html?boost=1`), da dieses den PV-Überschuss ignoriert und mit voller Leistung heizt.
+Ein- und Ausschalten erfolgt dabei weiterhin über dasselbe **Power-Register (`1000`)**, das auch die Power-Number-Entity nutzt (Ein: zuletzt gesetzter Leistungswert bzw. Fallback auf die Maximalleistung; Aus über die Water-Heater-Entity: `0`; die Power-Number auf `0` schaltet dagegen nicht aus) – analog zur `Enable()`-Implementierung in [evcc](https://github.com/evcc-io/evcc/blob/master/charger/mypv.go). Bewusst **nicht** verwendet wird das Gerät-eigene Register `1012` („Boost activate", physischer Boost-Backup-Knopf bzw. `/control.html?boost=1`), da dieses den PV-Überschuss ignoriert und mit voller Leistung heizt.
 
 ### Wiederherstellung nach einem Home-Assistant-Neustart
 
@@ -160,7 +164,7 @@ Die **Firmware-Version** lässt sich über Modbus auslesen und wird deshalb sowo
 
 **Hardware-Version und MAC-Adresse lassen sich nicht per Modbus auslesen.** Die offizielle Registertabelle des AC ELWA 2 definiert kein Hardware-/Board-Revisionsregister. Eine MAC-Adresse fehlt ebenfalls – selbst das im selben Dokument beschriebene UDP-Discovery-Protokoll liefert in seiner Antwort nur IP-Adresse, Seriennummer, Firmware-Version und ELWA-Nummer, aber keine MAC-Adresse. Beides wäre nur über das Webinterface des Geräts (HTTP) zu ermitteln, was außerhalb des Modbus-Ansatzes dieser Integration liegt.
 
-### ⚠️ Wichtiger Hinweis: Schreibhäufigkeit von Registern
+### Wichtiger Hinweis: Schreibhäufigkeit von Registern
 
 Laut offizieller my-PV-Dokumentation dürfen **alle schreibbaren Register höchstens einmal pro Tag beschrieben werden**, um den nichtflüchtigen Speicher des Geräts nicht vorzeitig zu verschleißen – **mit Ausnahme** der Register `1000` (Power), `1009`–`1012` (Uhrzeit/Boost activate) und `1078`–`1080`. Das betrifft insbesondere:
 
@@ -184,10 +188,10 @@ Für diese Integration bringt das aktuell keinen Mehrwert:
 
 - **Punkt 1 haben wir bereits** – diese Integration nutzt von Anfang an einen Config-Flow, keine YAML-Registerkarten.
 - **Punkt 2 trifft praktisch nicht zu** – die AC ELWA 2 hat eine eigene IP-Adresse und einen eigenen Modbus-TCP-Server. Es gibt keinen anderen Consumer, mit dem sich eine Verbindung teilen ließe.
-- Das neue Backend ist zum jetzigen Zeitpunkt erst wenige Tage alt; `modbus-connection` und das vorgeschlagene Vorlagen-Muster (eigenständige Device-Library + vendorisierte HACS-Integration) sind ein "Let's get building"-Aufruf, kein etabliertes Muster.
-- Eine Portierung würde die Mindest-HA-Version deutlich anheben (aktuell `2024.11.0`) und eine Aufteilung in eine eigenständige Device-Library + Integration erfordern – unverhältnismäßig für eine kleine inoffizielle Integration ohne den eigentlichen Nutzen (geteilte Verbindungen).
+- Das neue Backend ist zum jetzigen Zeitpunkt erst etwa einen Monat alt; `modbus-connection` und das vorgeschlagene Vorlagen-Muster (eigenständige Device-Library + vendorisierte HACS-Integration) sind ein "Let's get building"-Aufruf, kein etabliertes Muster.
+- Eine Portierung würde die Mindest-HA-Version deutlich anheben (aktuell `2026.5.0`) und eine Aufteilung in eine eigenständige Device-Library + Integration erfordern – unverhältnismäßig für eine kleine inoffizielle Integration ohne den eigentlichen Nutzen (geteilte Verbindungen).
 
-Diese Integration bleibt daher vorerst bei `pymodbus`. Sollte sich das neue Ökosystem etablieren oder sich die Anforderungen ändern (z. B. Wunsch nach Aufnahme in HA Core), kann diese Entscheidung revidiert werden.
+Diese Integration bleibt daher vorerst bei `pymodbus`. Geplant ist, ein paar weitere Home-Assistant-Releases abzuwarten und einen Wechsel auf das neue Backend rund um den Jahreswechsel 2026/2027 zu prüfen – sofern das Ökosystem bis dahin reifer ist und sich ein konkreter Nutzen ergibt (z. B. Wunsch nach Aufnahme in HA Core).
 
 ## Quellen & Danksagung
 
