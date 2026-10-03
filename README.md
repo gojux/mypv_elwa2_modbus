@@ -196,9 +196,11 @@ Diese Integration bleibt daher vorerst bei `pymodbus`. Geplant ist, ein paar wei
 ## Quellen & Danksagung
 
 - **[my-PV: AC ELWA 2 – Documentation of Controls (PDF, Version 241205)](https://download.my-pv.com/acelwa2/AC_ELWA_2_Documentation-Controls_EN241205.pdf)** – offizielle, autoritative Modbus-Registertabelle inkl. Status-Codes, Grundlage für die aktuelle Registerbelegung dieser Integration.
-- [evcc-io/evcc – charger/mypv.go](https://github.com/evcc-io/evcc/blob/master/charger/mypv.go) – produktiv erprobte Modbus-Registeransteuerung des AC ELWA 2, zum Abgleich verwendet.
+- [evcc-io/evcc – charger/mypv.go](https://github.com/evcc-io/evcc/blob/master/charger/mypv.go) – produktiv erprobte Modbus-Registeransteuerung des AC ELWA 2, zum Abgleich der Registerangaben verwendet. Aus dieser Datei wurde kein Code übernommen; die Datei selbst ist laut Hinweis im Header nicht unter der MIT-Lizenz des evcc-Projekts veröffentlicht.
 - [Modbuscloud – my-PV AC ELWA 2](https://www.modbuscloud.com/de/vorlagen/my-pv-ac-elwa-2-1821) – Community-Registervorlage, zum Abgleich verwendet.
 - [my-PV/home-assistant-integration](https://github.com/my-PV/home-assistant-integration) – offizielle Integration, als Vorbild für den abgedeckten Funktionsumfang (Sensoren, Zieltemperatur).
+
+Die Integration verwendet ausschließlich Registerangaben (Fakten) aus den genannten Quellen. Der Quellcode ist eigenständig geschrieben.
 
 ## Lizenz
 
