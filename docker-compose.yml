@@ -1,0 +1,30 @@
+# Local development environment: Home Assistant with this integration and an
+# AC ELWA 2 simulator.
+#
+#   docker compose up
+#
+# Then open http://localhost:8123, complete the onboarding and add the
+# integration with host "simulator" and port 502 (unit ID 1).
+services:
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:2026.5.1
+    restart: unless-stopped
+    ports:
+      - "8123:8123"
+    volumes:
+      - ./config:/config
+      - ./custom_components:/config/custom_components
+    depends_on:
+      - simulator
+
+  simulator:
+    image: python:3.14-slim
+    restart: unless-stopped
+    working_dir: /app
+    command: sh -c "pip install -q --root-user-action=ignore 'pymodbus>=3.6.6,<4.0' && python -m tests.simulator"
+    environment:
+      MODBUS_PORT: "502"
+    volumes:
+      - .:/app:ro
+    ports:
+      - "5020:502"

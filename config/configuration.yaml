@@ -1,0 +1,6 @@
+# Minimal development configuration. Runtime data (.storage, databases, logs)
+# is created by Home Assistant in this folder and is not committed.
+logger:
+  default: info
+  logs:
+    custom_components.mypv_elwa2_modbus: debug

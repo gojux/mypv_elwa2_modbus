@@ -2,3 +2,14 @@ __pycache__/
 *.pyc
 .vscode/
 .DS_Store
+
+# Local development runtime data (see docker-compose.yml)
+config/.storage/
+config/*.db
+config/*.db-*
+config/*.log*
+config/.cloud/
+config/deps/
+config/.ha_run.lock
+.env
+.pytest_cache/
