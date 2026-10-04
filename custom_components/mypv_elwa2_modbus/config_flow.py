@@ -174,7 +174,9 @@ class MyPVElwa2ModbusOptionsFlow(OptionsFlow):
                 vol.Optional(
                     CONF_SCAN_INTERVAL,
                     default=options.get(CONF_SCAN_INTERVAL, DEFAULT_SCAN_INTERVAL),
-                ): vol.All(vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)),
+                ): vol.All(
+                    vol.Coerce(int), vol.Range(min=MIN_SCAN_INTERVAL, max=MAX_SCAN_INTERVAL)
+                ),
                 vol.Optional(
                     CONF_MAX_POWER,
                     default=options.get(CONF_MAX_POWER, DEFAULT_MAX_POWER),

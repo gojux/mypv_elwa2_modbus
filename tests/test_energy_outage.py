@@ -28,7 +28,9 @@ async def _set_power(port: int, watts: int) -> None:
     client.close()
 
 
-async def _refresh(hass, entry) -> None:
+async def _refresh(hass, entry, clock) -> None:
+    # Each refresh stands for one scan interval that has passed on the clock.
+    clock.advance(UPDATE_INTERVAL_S)
     await entry.runtime_data.async_refresh()
     await hass.async_block_till_done()
 
@@ -45,7 +47,7 @@ def _energy_state(hass) -> float:
 
 
 async def test_energy_is_not_extrapolated_over_outage(
-    hass, enable_custom_integrations, socket_enabled
+    hass, enable_custom_integrations, socket_enabled, fake_clock
 ):
     port = _free_port()
     server, registers = await start_server("127.0.0.1", port)
@@ -60,32 +62,33 @@ async def test_energy_is_not_extrapolated_over_outage(
     await hass.config_entries.async_setup(entry.entry_id)
     await hass.async_block_till_done()
 
-    # The first successful update after setup only primes the integration
-    # (no previous interval is known yet), so three refreshes add two intervals.
+    # The setup poll sets the reference time, so three refreshes add three
+    # measured intervals.
     try:
         for _ in range(3):
-            await _refresh(hass, entry)
-        assert _energy_state(hass) == round(2 * KWH_PER_STEP, 4)
+            await _refresh(hass, entry, fake_clock)
+        assert _energy_state(hass) == round(3 * KWH_PER_STEP, 4)
 
         # Device offline: failing updates must not add energy.
         result = server.shutdown()
         if hasattr(result, "__await__"):
             await result
         for _ in range(3):
-            await _refresh(hass, entry)
+            await _refresh(hass, entry, fake_clock)
         assert _energy_state_raw(hass) == "unavailable"
 
-        # Device back: the first successful update primes again (no energy
-        # for the outage), the following one adds exactly one interval.
+        # Device back: the first successful update after an outage has no
+        # interval (no previous poll to measure from), the following one adds
+        # exactly one interval.
         server, _ = await start_server("127.0.0.1", port, holding_registers=registers)
         await _set_power(port, FULL_POWER_W)
-        await _refresh(hass, entry)
+        await _refresh(hass, entry, fake_clock)
         assert entry.runtime_data.last_update_success, "update after restart failed"
-        assert _energy_state(hass) == round(2 * KWH_PER_STEP, 4)
-
-        await _refresh(hass, entry)
-        assert entry.runtime_data.last_update_success, "second update after restart failed"
         assert _energy_state(hass) == round(3 * KWH_PER_STEP, 4)
+
+        await _refresh(hass, entry, fake_clock)
+        assert entry.runtime_data.last_update_success, "second update after restart failed"
+        assert _energy_state(hass) == round(4 * KWH_PER_STEP, 4)
     finally:
         result = server.shutdown()
         if hasattr(result, "__await__"):

@@ -194,9 +194,9 @@ class MyPVElwa2EnergySensor(MyPVElwa2Entity, RestoreSensor, SensorEntity):
     """Energy sensor, integrated locally from the Power register.
 
     The AC ELWA 2 does not expose a cumulative energy register over Modbus,
-    so this sensor keeps its own running total (Wh -> kWh) based on the
-    elapsed time between coordinator updates, similar to the HA "Riemann sum
-    integral" helper, and restores it across restarts.
+    so this sensor keeps its own running total (Wh -> kWh) by integrating the
+    power reading over the measured time between successful polls, similar to
+    the HA "Riemann sum integral" helper, and restores it across restarts.
     """
 
     _attr_translation_key = "energy"
@@ -209,7 +209,7 @@ class MyPVElwa2EnergySensor(MyPVElwa2Entity, RestoreSensor, SensorEntity):
         """Initialize the energy sensor."""
         super().__init__(coordinator, "energy")
         self._total_kwh: float = 0.0
-        self._previous_update_ok: bool = False
+        self._last_data: MyPVElwa2Data | None = None
 
     async def async_added_to_hass(self) -> None:
         """Restore the last known total when the entity is added."""
@@ -223,24 +223,28 @@ class MyPVElwa2EnergySensor(MyPVElwa2Entity, RestoreSensor, SensorEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Integrate one update interval per successful update.
+        """Integrate the energy of each new successful poll.
 
-        The energy of an interval is only added if the previous update was
-        successful too. After a failed update the next successful one starts
-        a new run, so the last known power is never extrapolated over a period
-        in which the device was not reachable.
+        Only a new data snapshot counts. Manual coordinator updates, e.g. after
+        an automatic-control write, reuse the same snapshot and add nothing.
+        The interval is the time the coordinator measured between two
+        successful polls. After a failed poll the coordinator has no interval,
+        so the next successful poll only starts a new run and the last known
+        power is never extrapolated over an outage.
         """
         data = self.coordinator.data
-        if data is not None and self.coordinator.last_update_success:
-            if self._previous_update_ok:
+        if (
+            data is not None
+            and self.coordinator.last_update_success
+            and data is not self._last_data
+        ):
+            self._last_data = data
+            if self.coordinator.poll_interval_s is not None:
                 self._total_kwh = integrate_energy_kwh(
                     self._total_kwh,
                     data.power,
-                    self.coordinator.update_interval.total_seconds(),
+                    self.coordinator.poll_interval_s,
                 )
-            self._previous_update_ok = True
-        else:
-            self._previous_update_ok = False
         super()._handle_coordinator_update()
 
     @property

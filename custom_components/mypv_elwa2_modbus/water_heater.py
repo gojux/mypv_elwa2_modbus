@@ -50,8 +50,11 @@ class MyPVElwa2WaterHeater(MyPVElwa2Entity, WaterHeaterEntity):
     "On" restores the last non-zero power that was explicitly requested
     (`coordinator.last_power_setpoint`, e.g. via the Power number entity or a
     previous "on") to register 1000. This is persisted to disk, so it also
-    survives a Home Assistant restart. The very first time it is ever turned
-    on - before any power has been set - it falls back to the device's
+    survives a Home Assistant restart. Only manually requested values count:
+    while automatic grid-surplus control is enabled, "on" restores nothing
+    and lets that control start from the live surplus instead. The very
+    first time it is ever turned on - before any power has been set - it
+    falls back to the device's
     configured max. power (register 1014), or the max power configured in
     the integration's options if that isn't available yet. While on, the
     coordinator keeps re-asserting this value on every poll cycle (see
@@ -125,7 +128,15 @@ class MyPVElwa2WaterHeater(MyPVElwa2Entity, WaterHeaterEntity):
             await self.async_turn_on()
 
     async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn the water heater on, restoring the last requested power."""
+        """Turn the water heater on, restoring the last requested power.
+
+        While automatic grid-surplus control is enabled, nothing is restored:
+        the control derives the power from the live surplus instead.
+        """
+        if self.coordinator.auto_control_enabled:
+            _LOGGER.debug("Water heater: turning on under automatic control")
+            await self.coordinator.async_turn_on_auto_control()
+            return
         if self.coordinator.last_power_setpoint:
             power = self.coordinator.last_power_setpoint
             source = "last_power_setpoint"
