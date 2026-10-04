@@ -45,20 +45,28 @@ def _initial_registers() -> list[int]:
     return values
 
 
-def build_device() -> ModbusDeviceContext:
-    return ModbusDeviceContext(hr=ModbusSequentialDataBlock(1, _initial_registers()))
+def build_holding_registers() -> ModbusSequentialDataBlock:
+    return ModbusSequentialDataBlock(1, _initial_registers())
 
 
-def build_server(device: ModbusDeviceContext) -> ModbusServerContext:
+def build_server(holding_registers: ModbusSequentialDataBlock) -> ModbusServerContext:
+    device = ModbusDeviceContext(hr=holding_registers)
     return ModbusServerContext(devices={UNIT_ID: device}, single=False)
 
 
-async def start_server(host: str, port: int) -> tuple[ModbusTcpServer, ModbusDeviceContext]:
-    """Start the simulator in the running event loop and return server and device."""
-    device = build_device()
-    server = ModbusTcpServer(build_server(device), address=(host, port))
+async def start_server(
+    host: str, port: int, holding_registers: ModbusSequentialDataBlock | None = None
+) -> tuple[ModbusTcpServer, ModbusSequentialDataBlock]:
+    """Start the simulator in the running event loop.
+
+    Returns the server and the holding register block, which tests can write
+    to. Pass an existing block to restart the server with the same state.
+    """
+    holding_registers = holding_registers or build_holding_registers()
+    server = ModbusTcpServer(build_server(holding_registers), address=(host, port))
     await server.serve_forever(background=True)
-    return server, device
+    await asyncio.sleep(0.2)  # let the background listener start accepting connections
+    return server, holding_registers
 
 
 async def _main() -> None:

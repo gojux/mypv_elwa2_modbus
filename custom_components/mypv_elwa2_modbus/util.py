@@ -5,6 +5,11 @@ from __future__ import annotations
 import struct
 
 
+def integrate_energy_kwh(total_kwh: float, power_w: float, interval_s: float) -> float:
+    """Add the energy of one update interval at the given power to a running total."""
+    return total_kwh + power_w * interval_s / 3600 / 1000
+
+
 def decode_serial_number(registers: list[int]) -> str:
     """Decode the AC ELWA 2 serial number from its Modbus registers.
 

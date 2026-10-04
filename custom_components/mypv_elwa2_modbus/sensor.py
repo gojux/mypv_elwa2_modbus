@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 from homeassistant.components.sensor import (
@@ -23,12 +22,12 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.util import dt as dt_util
 
 from .const import DEVICE_OPERATION_MODES, OPERATION_STATES, STATUS_CODES
 from . import MyPVElwa2ConfigEntry
 from .coordinator import MyPVElwa2Data, MyPVElwa2ModbusCoordinator
 from .entity import MyPVElwa2Entity
+from .util import integrate_energy_kwh
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -210,7 +209,7 @@ class MyPVElwa2EnergySensor(MyPVElwa2Entity, RestoreSensor, SensorEntity):
         """Initialize the energy sensor."""
         super().__init__(coordinator, "energy")
         self._total_kwh: float = 0.0
-        self._last_update: datetime | None = None
+        self._previous_update_ok: bool = False
 
     async def async_added_to_hass(self) -> None:
         """Restore the last known total when the entity is added."""
@@ -224,24 +223,24 @@ class MyPVElwa2EnergySensor(MyPVElwa2Entity, RestoreSensor, SensorEntity):
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Integrate the latest power reading into the running total.
+        """Integrate one update interval per successful update.
 
-        Only intervals between two successful, closely spaced updates are
-        integrated. After a failed update or a gap longer than two update
-        intervals, the reference point is reset, so the last known power is
-        never extrapolated over time the device was not reachable.
+        The energy of an interval is only added if the previous update was
+        successful too. After a failed update the next successful one starts
+        a new run, so the last known power is never extrapolated over a period
+        in which the device was not reachable.
         """
         data = self.coordinator.data
-        now = dt_util.utcnow()
-        if data is None or not self.coordinator.last_update_success:
-            self._last_update = None
+        if data is not None and self.coordinator.last_update_success:
+            if self._previous_update_ok:
+                self._total_kwh = integrate_energy_kwh(
+                    self._total_kwh,
+                    data.power,
+                    self.coordinator.update_interval.total_seconds(),
+                )
+            self._previous_update_ok = True
         else:
-            if self._last_update is not None:
-                elapsed = (now - self._last_update).total_seconds()
-                max_gap = 2 * self.coordinator.update_interval.total_seconds()
-                if elapsed <= max_gap:
-                    self._total_kwh += (data.power * elapsed / 3600) / 1000
-            self._last_update = now
+            self._previous_update_ok = False
         super()._handle_coordinator_update()
 
     @property
