@@ -205,3 +205,7 @@ Die Integration verwendet ausschließlich Registerangaben (Fakten) aus den genan
 ## Lizenz
 
 MIT, siehe [LICENSE](LICENSE). Diese Integration ist ein eigenständiges Community-Projekt und nicht mit my-PV GmbH assoziiert; „my-PV" und „AC ELWA" sind Marken ihrer jeweiligen Inhaber.
+
+## Logo und Lizenzen
+
+Das Logo im Ordner `brand/` basiert auf dem Icon *water-boiler* aus den [Material Design Icons](https://pictogrammers.com/library/mdi/) von Pictogrammers. Es steht unter der [Apache License 2.0](custom_components/mypv_elwa2_modbus/brand/LICENSE-MDI.txt). Der Blitz und die Farbgebung wurden hinzugefügt bzw. verändert. Der Quellcode dieser Integration steht unter der [MIT-Lizenz](LICENSE).
