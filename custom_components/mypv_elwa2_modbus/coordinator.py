@@ -135,9 +135,8 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
         self._lock = asyncio.Lock()
 
         # Manual power set-point that is actively re-asserted every poll
-        # cycle (mirrors evcc's heartbeat behaviour, since the AC ELWA 2
-        # reverts an unrefreshed Modbus power set-point to automatic control
-        # after a timeout). Register 1000 is explicitly exempt from my-PV's
+        # cycle (mirrors evcc's heartbeat behaviour). Register 1000 is
+        # explicitly exempt from my-PV's
         # "write at most once a day" rule, so this is safe to do on every
         # update. None means "not actively driving the device" (off): while
         # off, this integration intentionally stops writing to register
@@ -436,7 +435,9 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
         until the water heater is turned on - see
         `_async_apply_auto_control`'s `not self.is_on` guard. Turning the
         water heater off later does not turn this switch off either; it
-        only pauses the function again.
+        only pauses the function again. Turning the switch off while the
+        water heater is on sets the power to 0 W, since nothing else would
+        set it any more.
 
         Turning it on still requires a grid power entity to be configured
         (Options), so the switch never silently does nothing for a reason
@@ -454,6 +455,12 @@ class MyPVElwa2ModbusCoordinator(DataUpdateCoordinator[MyPVElwa2Data]):
             await self._async_apply_auto_control(
                 self._async_current_grid_state(), bypass_rate_limit=True
             )
+        elif not enabled and self.is_on:
+            # Without automatic control nothing sets the power any more, so the
+            # device must not keep the last automatic value. The water heater
+            # stays on, and 0 W is kept as the set-point. The power number then
+            # shows 0 W, and a later manual value applies as usual.
+            await self.async_set_manual_power(0)
         self.async_update_listeners()
 
     async def async_turn_on_auto_control(self) -> None:

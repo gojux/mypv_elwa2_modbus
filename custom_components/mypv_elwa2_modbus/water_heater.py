@@ -58,8 +58,7 @@ class MyPVElwa2WaterHeater(MyPVElwa2Entity, WaterHeaterEntity):
     configured max. power (register 1014), or the max power configured in
     the integration's options if that isn't available yet. While on, the
     coordinator keeps re-asserting this value on every poll cycle (see
-    `coordinator.power_setpoint`), since the AC ELWA 2 reverts an unrefreshed
-    Modbus power set-point to automatic control after a timeout.
+    `coordinator.power_setpoint`), so the device keeps the requested value.
 
     "Off" writes 0 exactly once - unlike "on", it is then *not* re-asserted
     on every poll cycle, so Home Assistant doesn't keep fighting the

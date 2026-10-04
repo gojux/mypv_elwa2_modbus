@@ -264,3 +264,30 @@ async def test_queued_grid_event_uses_updated_base(
         assert await _read_power(port) == 2000
     finally:
         await _shutdown(server)
+
+
+async def test_switching_auto_control_off_sets_zero_watts_and_keeps_heater_on(
+    hass, enable_custom_integrations, socket_enabled
+):
+    port = _free_port()
+    server, _ = await start_server("127.0.0.1", port)
+    try:
+        entry = await _setup_auto_control(hass, port)
+        heater = _entity_id(hass, "water_heater", "water_heater")
+        auto = _entity_id(hass, "switch", "auto_control")
+        power = _entity_id(hass, "number", "power_setpoint")
+
+        await _call(hass, "water_heater", "turn_on", heater)
+        assert await _read_power(port) == 700
+
+        await _call(hass, "switch", "turn_off", auto)
+        assert await _read_power(port) == 0
+        assert entry.runtime_data.is_on is True
+        assert float(hass.states.get(power).state) == 0.0
+
+        # Automatic control is off, so a grid change must not write anything.
+        hass.states.async_set(GRID_ENTITY_ID, "1500")
+        await hass.async_block_till_done()
+        assert await _read_power(port) == 0
+    finally:
+        await _shutdown(server)
